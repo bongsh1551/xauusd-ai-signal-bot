@@ -1,9 +1,11 @@
 import base64
+import hashlib
 import io
 import json
 import os
 import sys
-from datetime import datetime, timezone
+import uuid
+from pathlib import Path
 
 import matplotlib
 matplotlib.use('Agg')
@@ -12,41 +14,48 @@ import mplfinance as mpf
 import pandas as pd
 import requests
 
-
+MODEL = 'gemini-3.5-flash-lite'
 PROMPT_PATH = 'prompts/scalper.txt'
-GEMINI_URL = (
-    'https://generativelanguage.googleapis.com/v1beta/models/'
-    'gemini-3.5-flash-lite:generateContent'
-)
+HEADER = '🧪 历史行情分析测试｜不是当前交易信号，不可据此进场'
 
 
-def load_prompt():
-    with open(PROMPT_PATH, 'r', encoding='utf-8') as handle:
-        prompt = handle.read().strip()
-    if not prompt:
-        raise RuntimeError('prompt file is empty')
-    return prompt
+def save_record(path, record):
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
+    temporary.replace(path)
 
 
-def fetch_chart(key, interval, minutes, now):
+def api_json(response, service, secrets):
+    if response.status_code != 200:
+        try:
+            error = response.json().get('error', {})
+            message = error.get('message', '') if isinstance(error, dict) else ''
+        except ValueError:
+            message = ''
+        for secret in secrets:
+            if secret:
+                message = message.replace(secret, '[REDACTED]')
+        raise RuntimeError(f'{service} HTTP {response.status_code}: {message[:600]}')
+    return response.json()
+
+
+def fetch_chart(key, interval, minutes, now, folder):
     response = requests.get(
         'https://api.twelvedata.com/time_series',
-        params={'symbol': 'XAU/USD', 'interval': interval,
-                'outputsize': 160, 'timezone': 'UTC', 'apikey': key},
-        timeout=(10, 45),
-    )
-    if response.status_code != 200:
-        raise RuntimeError(f'{interval}: data HTTP {response.status_code}')
-    data = response.json()
+        params={'symbol': 'XAU/USD', 'interval': interval, 'outputsize': 160,
+                'timezone': 'UTC', 'apikey': key}, timeout=(10, 45))
+    data = api_json(response, f'Twelve Data {interval}', [key])
     if data.get('status') != 'ok' or not data.get('values'):
-        raise RuntimeError(f'{interval}: data rejected; code={data.get("code", "unknown")}')
+        raise RuntimeError(f'{interval}: data rejected')
     meta = data.get('meta', {})
     if meta.get('symbol') != 'XAU/USD' or meta.get('interval') != interval:
         raise RuntimeError(f'{interval}: unexpected symbol or interval')
+    (folder / f'{interval}_response.json').write_text(
+        json.dumps({'meta': meta, 'values': data['values']}, ensure_ascii=False), encoding='utf-8')
     frame = pd.DataFrame(data['values'])
     frame.index = pd.to_datetime(frame.pop('datetime'), utc=True, errors='raise')
     if frame.index.has_duplicates or frame.index.isna().any():
-        raise RuntimeError(f'{interval}: invalid or duplicate timestamps')
+        raise RuntimeError(f'{interval}: invalid timestamps')
     frame = frame[['open', 'high', 'low', 'close']].apply(pd.to_numeric, errors='raise')
     frame.columns = ['Open', 'High', 'Low', 'Close']
     frame = frame.sort_index()
@@ -56,181 +65,143 @@ def fetch_chart(key, interval, minutes, now):
             (frame.Low > frame[['Open', 'Close', 'High']].min(axis=1))).any():
         raise RuntimeError(f'{interval}: invalid OHLC ordering')
     if frame.index.max() > now + pd.Timedelta(seconds=60):
-        raise RuntimeError(f'{interval}: future timestamp; stop for timezone verification')
+        raise RuntimeError(f'{interval}: future timestamp')
     frame = frame[frame.index + pd.Timedelta(minutes=minutes) <= now]
     if len(frame) < 50:
         raise RuntimeError(f'{interval}: insufficient closed candles')
-    last_open = frame.index[-1]
-    age = (now - (last_open + pd.Timedelta(minutes=minutes))).total_seconds() / 60
-    stale = age > max(15, minutes * 2)
-    label = 'HISTORICAL / STALE - TEST ONLY' if stale else 'CHART TEST ONLY - NOT A SIGNAL'
-    plot_frame = frame.tail(120).copy()
-    plot_frame.index = plot_frame.index.tz_convert('Asia/Kuala_Lumpur').tz_localize(None)
+    frame.to_csv(folder / f'{interval}_closed_ohlc.csv', index_label='timestamp_utc')
+    frame.tail(40).to_csv(folder / f'{interval}_ai_ohlc.csv', index_label='timestamp_utc')
+    ranges = frame.tail(40).High - frame.tail(40).Low
+    age = (now - (frame.index[-1] + pd.Timedelta(minutes=minutes))).total_seconds() / 60
+    diagnostic = {
+        'interval': interval, 'candles_available': len(frame), 'candles_sent': 40,
+        'last_closed_candle_utc': frame.index[-1].isoformat(),
+        'last_closed_candle_myt': frame.index[-1].tz_convert('Asia/Kuala_Lumpur').isoformat(),
+        'minutes_since_close': round(age, 2), 'timestamp_stale': bool(age > max(15, minutes * 2)),
+        'run_is_myt_weekend': bool(now.tz_convert('Asia/Kuala_Lumpur').dayofweek >= 5),
+        'market_session_verified': False,
+        'recent_range_min': float(ranges.min()), 'recent_range_max': float(ranges.max()),
+        'recent_range_median': float(ranges.median()),
+        'diagnostic_narrow_range_threshold_usd': 0.05,
+        'recent_narrow_range_count': int((ranges <= 0.050000001).sum()),
+        'recent_zero_range_count': int((ranges.abs() <= 0.000000001).sum()),
+        'time_gaps_in_sample': int((frame.index.to_series().diff() > pd.Timedelta(minutes=minutes)).sum()),
+        'quality_verdict': 'UNVERIFIED_TEST_ONLY',
+        'note': '时间新不代表有效行情；窄幅统计为诊断，不判定原因；周末标记不替代交易时段日历。'}
+    plot = frame.tail(120).copy()
+    plot.index = plot.index.tz_convert('Asia/Kuala_Lumpur').tz_localize(None)
+    fig, _ = mpf.plot(plot, type='candle', style='yahoo', volume=False,
+                      title=f'XAU/USD {interval} | MYT UTC+8 | HISTORICAL TEST ONLY',
+                      figsize=(14, 7), returnfig=True, tight_layout=True)
     buffer = io.BytesIO()
-    fig, _ = mpf.plot(
-        plot_frame, type='candle', style='yahoo', volume=False,
-        title=f'XAU/USD {interval} | MYT UTC+8\n{label}',
-        ylabel='USD per oz', datetime_format='%m-%d %H:%M',
-        figsize=(14, 7), returnfig=True, tight_layout=True,
-    )
     try:
         fig.savefig(buffer, format='png', dpi=130, bbox_inches='tight')
     finally:
         plt.close(fig)
-    buffer.seek(0)
-    last_myt = last_open.tz_convert('Asia/Kuala_Lumpur').strftime('%Y-%m-%d %H:%M')
-    gaps = int((frame.index.to_series().diff() > pd.Timedelta(minutes=minutes)).sum())
-    caption = (
-        f'🧪 XAU/USD {interval} 画图测试\n'
-        f'最后已收线 K 线起点（大马时间）：{last_myt}\n'
-        f'距该根收线：{age:.1f} 分钟\n'
-        f'数据状态：{"历史/陈旧数据，仅作画图测试" if stale else "通过本次时间阈值检查，未验证实时报价"}\n'
-        f'样本内时间缺口：{gaps}（可能含休市，尚未判定原因）\n'
-        '来源：Twelve Data；不等于你的券商报价。\n'
-        '本图仅测试，不是交易信号；未调用 AI，禁止据此入场。'
-    )
-    metadata = {
-        'interval': interval,
-        'candles_available': int(len(frame)),
-        'candles_sent': int(min(40, len(frame))),
-        'last_closed_candle_utc': last_open.isoformat(),
-        'last_closed_candle_myt': last_myt,
-        'minutes_since_close': round(age, 1),
-        'historical_or_stale': bool(stale),
-        'time_gaps_in_sample': gaps,
-    }
-    return interval, buffer, caption, frame, metadata
-
-
-def build_ohlc_text(frame, interval, candles=40):
-    recent = frame.tail(candles)
-    lines = [f'{interval} OHLC（UTC，已收线，最多 {candles} 根）：']
-    for timestamp, row in recent.iterrows():
-        lines.append(
-            f'{timestamp.isoformat()} O={row.Open:.2f} H={row.High:.2f} '
-            f'L={row.Low:.2f} C={row.Close:.2f}'
-        )
-    return '\n'.join(lines)
-
-
-def call_gemini(api_key, prompt, charts):
-    parts = [{
-        'text': (
-            f'{prompt}\n\n'
-            '【执行模式】历史行情分析测试。今天是周末，数据可能来自最近交易日，'
-            '不是实时市场。必须以“🧪 历史行情分析测试｜不是当前交易信号，不可据此进场”开头。\n\n'
-            '【当前时间】UTC：'
-            f'{datetime.now(timezone.utc).isoformat()}\n'
-            '请只依据以下图像和 OHLC 分析；不要使用未提供的新闻或宏观资料。\n\n'
-        )
-    }]
-    for interval, image, _caption, frame, _metadata in charts:
-        parts.append({'text': build_ohlc_text(frame, interval)})
-        parts.append({
-            'inline_data': {
-                'mime_type': 'image/png',
-                'data': base64.b64encode(image.getvalue()).decode('ascii'),
-            }
-        })
-    payload = {
-        'contents': [{'role': 'user', 'parts': parts}],
-        'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 2048},
-    }
-    response = requests.post(
-        GEMINI_URL,
-        params={'key': api_key},
-        headers={'Content-Type': 'application/json'},
-        json=payload,
-        timeout=(10, 120),
-    )
-    if response.status_code != 200:
-        raise RuntimeError(f'Gemini HTTP {response.status_code}')
-    result = response.json()
-    try:
-        text = result['candidates'][0]['content']['parts'][0]['text'].strip()
-    except (KeyError, IndexError, TypeError):
-        raise RuntimeError('Gemini returned no usable analysis text')
-    if not text:
-        raise RuntimeError('Gemini returned empty analysis')
-    return text, result
-
-
-def send_telegram(token, chat_id, text):
-    message = text[:4000]
-    response = requests.post(
-        f'https://api.telegram.org/bot{token}/sendMessage',
-        data={'chat_id': chat_id, 'text': message},
-        timeout=(10, 60),
-    )
-    ok = response.status_code == 200 and response.json().get('ok') is True
-    if not ok:
-        raise RuntimeError(f'Telegram sendMessage failed: HTTP {response.status_code}')
-    return {'sent': True, 'characters_sent': len(message), 'truncated': len(text) > 4000}
-
-
-def write_journal(charts, prompt, analysis, gemini_result, telegram_result):
-    os.makedirs('journal', exist_ok=True)
-    run_id = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
-    record = {
-        'run_id': run_id,
-        'created_at_utc': datetime.now(timezone.utc).isoformat(),
-        'mode': 'historical_weekend_test',
-        'prompt_path': PROMPT_PATH,
-        'prompt_sha256': __import__('hashlib').sha256(
-            prompt.encode('utf-8')).hexdigest(),
-        'data_source': 'Twelve Data',
-        'ai_model': 'gemini-3.5-flash-lite',
-        'charts': [metadata for _i, _image, _caption, _frame, metadata in charts],
-        'ai_raw_output': analysis,
-        'gemini_usage': gemini_result.get('usageMetadata', {}),
-        'telegram': telegram_result,
-        'execution': 'manual_only_no_auto_trading',
-    }
-    path = f'journal/{run_id}.json'
-    with open(path, 'w', encoding='utf-8') as handle:
-        json.dump(record, handle, ensure_ascii=False, indent=2)
-    return path
+    image = buffer.getvalue()
+    buffer.close()
+    (folder / f'{interval}.png').write_bytes(image)
+    return frame, image, diagnostic
 
 
 def main():
     if os.getenv('GITHUB_EVENT_NAME') != 'workflow_dispatch':
         print('测试阶段：跳过定时任务。')
-        return
-    names = [
-        'TWELVEDATA_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
-        'GEMINI_API_KEY',
-    ]
+        return 0
+    now = pd.Timestamp.now(tz='UTC')
+    run_id = now.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
+    folder = Path('journal') / run_id
+    folder.mkdir(parents=True, exist_ok=False)
+    record_path = folder / 'record.json'
+    record = {'run_id': run_id, 'created_at_utc': now.isoformat(),
+              'created_at_myt': now.tz_convert('Asia/Kuala_Lumpur').isoformat(),
+              'mode': 'historical_test', 'ai_model': MODEL, 'charts': [],
+              'code_commit': os.getenv('GITHUB_SHA', ''),
+              'stage': 'configuration', 'status': 'running',
+              'telegram': {'attempted': False, 'sent': False},
+              'execution': 'manual_only_no_auto_trading'}
+    save_record(record_path, record)
+    names = ['TWELVEDATA_API_KEY', 'GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
     config = {name: os.getenv(name, '').strip() for name in names}
-    missing = [name for name in names if not config[name]]
-    if missing:
-        print(f'缺少必要 Secret：{", ".join(missing)}')
-        sys.exit(1)
     try:
-        prompt = load_prompt()
-        now = pd.Timestamp.now(tz='UTC')
-        charts = [
-            fetch_chart(config['TWELVEDATA_API_KEY'], interval, minutes, now)
-            for interval, minutes in [('5min', 5), ('15min', 15), ('1h', 60)]
-        ]
-        analysis, gemini_result = call_gemini(
-            config['GEMINI_API_KEY'], prompt, charts
-        )
-        telegram_result = send_telegram(
-            config['TELEGRAM_BOT_TOKEN'], config['TELEGRAM_CHAT_ID'], analysis
-        )
-        journal_path = write_journal(
-            charts, prompt, analysis, gemini_result, telegram_result
-        )
-        for _interval, image, _caption, _frame, _metadata in charts:
-            image.close()
-        print(f'历史测试分析已发送；Journal：{journal_path}')
-    except RuntimeError as exc:
-        print(str(exc))
-        sys.exit(1)
+        missing = [name for name in names if not config[name]]
+        if missing:
+            raise RuntimeError('Missing Secrets: ' + ', '.join(missing))
+        record['stage'] = 'prompt'
+        save_record(record_path, record)
+        prompt = Path(PROMPT_PATH).read_text(encoding='utf-8').strip()
+        if not prompt:
+            raise RuntimeError('Empty prompt')
+        (folder / 'prompt.txt').write_text(prompt, encoding='utf-8')
+        record['prompt_sha256'] = hashlib.sha256(prompt.encode()).hexdigest()
+        instruction = (prompt + '\n\n【执行模式】仅历史分析测试，不是实时交易。\n'
+                       + HEADER + '\n当前 UTC：' + now.isoformat()
+                       + '\n当前大马时间：' + now.tz_convert('Asia/Kuala_Lumpur').isoformat()
+                       + '\n不编造宏观背景，不把新时间戳等同于有效行情。只基于以下输入。')
+        parts = [{'text': instruction}]
+        (folder / 'execution_instruction.txt').write_text(instruction, encoding='utf-8')
+        for interval, minutes in [('5min', 5), ('15min', 15), ('1h', 60)]:
+            record['stage'] = 'fetch_' + interval
+            save_record(record_path, record)
+            frame, image, diagnostic = fetch_chart(config['TWELVEDATA_API_KEY'], interval, minutes, now, folder)
+            record['charts'].append(diagnostic)
+            text = (interval + ' 已收线 OHLC，UTC：\n'
+                    + frame.tail(40).to_csv(index_label='timestamp_utc')
+                    + '\n程序诊断：' + json.dumps(diagnostic, ensure_ascii=False))
+            (folder / f'{interval}_ai_text.txt').write_text(text, encoding='utf-8')
+            parts.extend([{'text': text}, {'inline_data': {'mime_type': 'image/png',
+                          'data': base64.b64encode(image).decode('ascii')}}])
+            save_record(record_path, record)
+        record['stage'] = 'gemini'
+        save_record(record_path, record)
+        response = requests.post(
+            f'https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent',
+            headers={'x-goog-api-key': config['GEMINI_API_KEY']},
+            json={'contents': [{'role': 'user', 'parts': parts}],
+                  'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 2048}}, timeout=(10, 120))
+        result = api_json(response, 'Gemini', list(config.values()))
+        candidates = result.get('candidates', [])
+        if not candidates:
+            raise RuntimeError('Gemini: no candidates')
+        candidate = candidates[0]
+        record['gemini_finish_reason'] = candidate.get('finishReason')
+        analysis = '\n'.join(p.get('text', '') for p in candidate.get('content', {}).get('parts', [])
+                             if not p.get('thought')).strip()
+        record['ai_raw_output'] = analysis
+        record['gemini_usage'] = result.get('usageMetadata', {})
+        save_record(record_path, record)
+        if not analysis or candidate.get('finishReason') != 'STOP':
+            raise RuntimeError('Gemini output missing or incomplete; Telegram skipped')
+        message = HEADER + '\n\n' + analysis.removeprefix(HEADER).lstrip()
+        if len(message.encode('utf-16-le')) // 2 > 4000:
+            raise RuntimeError('Analysis too long; saved in journal; Telegram skipped rather than truncating')
+        record['stage'] = 'telegram'
+        record['telegram'] = {'attempted': True, 'sent': False}
+        save_record(record_path, record)
+        response = requests.post(
+            f"https://api.telegram.org/bot{config['TELEGRAM_BOT_TOKEN']}/sendMessage",
+            data={'chat_id': config['TELEGRAM_CHAT_ID'], 'text': message}, timeout=(10, 60))
+        sent = api_json(response, 'Telegram', list(config.values()))
+        if sent.get('ok') is not True:
+            raise RuntimeError('Telegram rejected message')
+        record['telegram'] = {'attempted': True, 'sent': True, 'truncated': False,
+                              'message_id': sent.get('result', {}).get('message_id')}
+        record['status'] = 'completed'
+        record['stage'] = 'completed'
+        save_record(record_path, record)
+        print(f'历史测试完成；Journal: {folder}')
+        return 0
     except Exception as exc:
-        print(f'测试停止：{type(exc).__name__}；为保护密钥不输出原始请求或响应。')
-        sys.exit(1)
+        message = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+        for secret in config.values():
+            if secret:
+                message = message.replace(secret, '[REDACTED]')
+        record['status'] = 'failed'
+        record['error'] = message[:1000]
+        save_record(record_path, record)
+        print(f"测试停止于 {record['stage']}: {record['error']}")
+        return 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
