@@ -14,6 +14,8 @@ import mplfinance as mpf
 import pandas as pd
 import requests
 
+from fundamentals import collect_fundamentals
+
 MODEL = 'gemini-3.5-flash-lite'
 PROMPT_PATH = 'prompts/scalper.txt'
 HEADER = '🧪 历史行情分析测试｜不是当前交易信号，不可据此进场'
@@ -113,6 +115,7 @@ def upload_plan(config, analysis, record):
         'ai_model': MODEL,
         'code_commit': record.get('code_commit', ''),
         'charts': record.get('charts', []),
+        'fundamentals': record.get('fundamentals', {}),
         'source': 'github_workflow'
     }
     response = requests.post(
@@ -175,6 +178,17 @@ def main():
             parts.extend([{'text': text}, {'inline_data': {'mime_type': 'image/png',
                           'data': base64.b64encode(image).decode('ascii')}}])
             save_record(record_path, record)
+        record['stage'] = 'fundamentals'
+        save_record(record_path, record)
+        fundamentals = collect_fundamentals(config['TWELVEDATA_API_KEY'], now, folder)
+        record['fundamentals'] = {
+            'calendar_event_count': len(fundamentals['calendar_events']),
+            'calendar_events': fundamentals['calendar_events'],
+            'dxy': fundamentals['dxy'],
+            'errors': fundamentals['errors']
+        }
+        parts.append({'text': fundamentals['context']})
+        save_record(record_path, record)
         record['stage'] = 'gemini'
         save_record(record_path, record)
         response = requests.post(
