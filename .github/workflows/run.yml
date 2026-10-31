@@ -25,3 +25,12 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
+
+      - name: Upload analysis journal
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xauusd-analysis-journal-${{ github.run_id }}
+          path: journal/
+          if-no-files-found: ignore
+          retention-days: 90
