@@ -16,7 +16,7 @@ import requests
 PROMPT_PATH = 'prompts/scalper.txt'
 GEMINI_URL = (
     'https://generativelanguage.googleapis.com/v1beta/models/'
-    'gemini-2.5-flash:generateContent'
+    'gemini-3.5-flash-lite:generateContent'
 )
 
 
@@ -179,7 +179,7 @@ def write_journal(charts, prompt, analysis, gemini_result, telegram_result):
         'prompt_sha256': __import__('hashlib').sha256(
             prompt.encode('utf-8')).hexdigest(),
         'data_source': 'Twelve Data',
-        'ai_model': 'gemini-2.5-flash',
+        'ai_model': 'gemini-3.5-flash-lite',
         'charts': [metadata for _i, _image, _caption, _frame, metadata in charts],
         'ai_raw_output': analysis,
         'gemini_usage': gemini_result.get('usageMetadata', {}),
