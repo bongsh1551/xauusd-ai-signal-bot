@@ -13,109 +13,156 @@ def _json(response, service):
 
 
 def fetch_calendar(now, folder):
-    response = requests.get(CALENDAR_URL, timeout=(10, 30))
-    data = _json(response, 'Forex Factory calendar')
-    (folder / 'calendar_raw.json').write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-    selected = []
-    for item in data:
-        try:
-            event_time = pd.Timestamp(item.get('date'), tz='UTC')
-        except Exception:
-            continue
-        if not (now <= event_time <= now + pd.Timedelta(hours=24)):
-            continue
-        impact = str(item.get('impact', '')).strip().lower()
-        if impact not in ('high', 'medium'):
-            continue
-        selected.append({
-            'time_utc': event_time.isoformat(),
-            'time_myt': event_time.tz_convert('Asia/Kuala_Lumpur').isoformat(),
-            'currency': item.get('country', ''),
-            'impact': impact,
-            'title': item.get('title', ''),
-            'forecast': item.get('forecast', ''),
-            'previous': item.get('previous', '')
-        })
-    selected.sort(key=lambda x: x['time_utc'])
-    (folder / 'calendar_selected.json').write_text(
-        json.dumps(selected, ensure_ascii=False, indent=2), encoding='utf-8')
-    return selected
+    try:
+        response = requests.get(CALENDAR_URL, timeout=(10, 30))
+        data = _json(response, 'Forex Factory calendar')
+        if not isinstance(data, list):
+            raise RuntimeError('calendar payload is not a list')
+        (folder / 'calendar_raw.json').write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        selected = []
+        for item in data:
+            try:
+                event_time = pd.Timestamp(item.get('date'), tz='UTC')
+            except Exception:
+                continue
+            if not (now <= event_time <= now + pd.Timedelta(hours=24)):
+                continue
+            impact = str(item.get('impact', '')).strip().lower()
+            if impact not in ('high', 'medium'):
+                continue
+            selected.append({
+                'time_utc': event_time.isoformat(),
+                'time_myt': event_time.tz_convert('Asia/Kuala_Lumpur').isoformat(),
+                'currency': item.get('country', ''),
+                'impact': impact,
+                'title': item.get('title', ''),
+                'forecast': item.get('forecast', ''),
+                'previous': item.get('previous', '')
+            })
+        selected.sort(key=lambda x: x['time_utc'])
+        (folder / 'calendar_selected.json').write_text(
+            json.dumps(selected, ensure_ascii=False, indent=2), encoding='utf-8')
+        status = 'ok' if selected else 'no_events'
+        return {'status': status, 'events': selected, 'error': None}
+    except Exception as exc:
+        return {'status': 'error', 'events': [], 'error': str(exc)[:300]}
 
 
-def fetch_dxy(key, now, folder):
+def fetch_fx(key, symbol, now, folder):
     response = requests.get(
-        'https://api.twelvedata.com/quote',
-        params={'symbol': 'DXY', 'apikey': key}, timeout=(10, 30))
-    data = _json(response, 'Twelve Data DXY quote')
-    if data.get('status') == 'error':
-        raise RuntimeError('Twelve Data DXY quote rejected: ' + str(data.get('message', ''))[:200])
-    quote = {
-        'symbol': data.get('symbol', 'DXY'),
-        'price': data.get('close'),
-        'change': data.get('change'),
-        'percent_change': data.get('percent_change'),
-        'high': data.get('high'),
-        'low': data.get('low'),
-        'open': data.get('open'),
-        'previous_close': data.get('previous_close'),
-        'fetched_at_utc': now.isoformat()
+        'https://api.twelvedata.com/time_series',
+        params={'symbol': symbol, 'interval': '1h', 'outputsize': 10,
+                'timezone': 'UTC', 'apikey': key}, timeout=(10, 30))
+    data = _json(response, f'Twelve Data {symbol}')
+    if data.get('status') != 'ok' or not data.get('values'):
+        raise RuntimeError(f'{symbol}: data rejected')
+    frame = pd.DataFrame(data['values'])
+    frame.index = pd.to_datetime(frame.pop('datetime'), utc=True, errors='raise')
+    frame = frame[['open', 'high', 'low', 'close']].apply(pd.to_numeric, errors='raise')
+    frame.columns = ['Open', 'High', 'Low', 'Close']
+    frame = frame.sort_index()
+    frame = frame[frame.index + pd.Timedelta(hours=1) <= now]
+    if len(frame) < 5:
+        raise RuntimeError(f'{symbol}: insufficient closed H1 candles')
+    last_close = float(frame.Close.iloc[-1])
+    previous_close = float(frame.Close.iloc[-5])
+    change_pct = (last_close / previous_close - 1) * 100
+    result = {
+        'symbol': symbol,
+        'last_close': last_close,
+        'change_4h_pct': round(change_pct, 4),
+        'last_closed_utc': frame.index[-1].isoformat(),
+        'closed_h1_candles': int(len(frame))
     }
-    (folder / 'dxy_quote.json').write_text(
-        json.dumps(quote, ensure_ascii=False, indent=2), encoding='utf-8')
-    return quote
+    (folder / f"{symbol.replace('/', '').lower()}_h1.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+    return result
 
 
-def build_context(now, events, dxy, errors):
+def currency_strength(eurusd, usdjpy):
+    if not eurusd or not usdjpy:
+        return {'status': 'UNAVAILABLE', 'usd_vs_eur_pct': None,
+                'usd_vs_jpy_pct': None, 'reason': 'EURUSD or USDJPY data unavailable'}
+    usd_vs_eur = -float(eurusd['change_4h_pct'])
+    usd_vs_jpy = float(usdjpy['change_4h_pct'])
+    if usd_vs_eur > 0 and usd_vs_jpy > 0:
+        status = 'USD_STRONG'
+    elif usd_vs_eur < 0 and usd_vs_jpy < 0:
+        status = 'USD_WEAK'
+    else:
+        status = 'MIXED'
+    return {'status': status, 'usd_vs_eur_pct': round(usd_vs_eur, 4),
+            'usd_vs_jpy_pct': round(usd_vs_jpy, 4),
+            'method': 'last 4 closed H1 candles; consistent direction required',
+            'eurusd': eurusd, 'usdjpy': usdjpy}
+
+
+def build_context(now, calendar, strength, errors):
     lines = [
-        '【Fundamental Context｜程序提供，不得编造】',
+        '【Market Context｜程序提供，不得编造】',
         '当前 UTC：' + now.isoformat(),
         '当前大马时间：' + now.tz_convert('Asia/Kuala_Lumpur').isoformat(),
         ''
     ]
-    if dxy:
-        lines.extend([
-            'DXY 美元指数：',
-            json.dumps(dxy, ensure_ascii=False),
-            '解读要求：DXY 上升通常对黄金构成压力，下降通常支持黄金；但这只是 confluence，不是机械反向规则。'
-        ])
-    else:
-        lines.append('DXY 美元指数：未提供或获取失败。')
-    lines.append('')
-    if events:
-        lines.append('未来 24 小时高/中影响力经济事件：')
-        for event in events:
+    lines.append('【Fundamental：经济日历】')
+    if calendar['status'] == 'ok':
+        lines.append('状态：已获取；未来 24 小时高/中影响力事件 ' + str(len(calendar['events'])) + ' 个。')
+        for event in calendar['events']:
             lines.append('- ' + json.dumps(event, ensure_ascii=False))
-        lines.extend([
-            '',
-            '新闻使用规则：',
-            '1. 先判断事件是否可能改变 USD strength、利率预期、风险情绪或黄金流动性。',
-            '2. 将其作为 Bias confluence，与 H1/M15/M5 结构一起判断；不要因为即将有新闻就自动禁止交易。',
-            '3. 高影响力事件前后，明确提醒波动与 spread 风险；若事件就在几分钟内，优先 WAIT 或要求更严格确认。',
-            '4. 不预测数据结果；只说明可能情景与结构失效条件。'
-        ])
+    elif calendar['status'] == 'no_events':
+        lines.append('状态：已获取，但未来 24 小时没有高/中影响力事件。')
     else:
-        lines.append('未来 24 小时高/中影响力经济事件：未提供或获取失败。')
-    if errors:
-        lines.append('')
-        lines.append('Fundamental 数据错误：' + json.dumps(errors, ensure_ascii=False))
+        lines.append('状态：获取失败。错误：' + str(calendar['error']))
     lines.append('')
-    lines.append('请在分析开头先建立今日 Fundamental Bias：USD bullish / bearish / neutral，以及对 XAUUSD 的倾向；再结合 ICT/SMC 结构。')
+    lines.append('【Currency Strength：EURUSD + USDJPY】')
+    lines.append(json.dumps(strength, ensure_ascii=False))
+    lines.extend([
+        '',
+        '解读规则：',
+        '1. USD_STRONG：美元对欧元与日元最近 4 根 H1 已收线均走强；通常对黄金构成压力，但不是自动 SELL。',
+        '2. USD_WEAK：美元对欧元与日元最近 4 根 H1 已收线均走弱；通常对黄金构成支持，但不是自动 BUY。',
+        '3. MIXED：两个货币对方向不一致，不能声称美元全面走强或走弱。',
+        '4. UNAVAILABLE：资料不足，不要编造美元方向。',
+        '5. 这是 intermarket confluence，不是 Fundamental 新闻，也不是黄金进场信号；最终必须与 XAUUSD H1/M15/M5 结构共振。',
+        '6. 没有真实 order flow、volume 或订单簿资料时，不得声称看到订单流。',
+        ''
+    ])
+    lines.append('【Fundamental 使用规则】')
+    lines.extend([
+        '1. 经济日历用于识别可能影响 USD、利率预期、风险情绪或黄金流动性的事件。',
+        '2. 新闻与数据是 confluence，不是自动禁止交易的过滤器。',
+        '3. 高影响力事件临近时，提醒波动、spread 与流动性风险；事件就在几分钟内时优先 WAIT 或要求更强确认。',
+        '4. 不预测数据结果；只说明可能情景与结构失效条件。',
+        '5. 先分别说明 Fundamental 状态与 Currency Strength 状态；证据不足时明确写“不明确”，不强行给方向。',
+        ''
+    ])
+    if errors:
+        lines.append('数据错误：' + json.dumps(errors, ensure_ascii=False))
+        lines.append('')
+    lines.append('请在分析开头分别给出：Fundamental status、USD strength status，以及它们是否与 XAUUSD 结构共振；再进行 ICT/SMC 分析。')
     return '\n'.join(lines)
 
 
 def collect_fundamentals(key, now, folder):
+    calendar = fetch_calendar(now, folder)
     errors = {}
-    events = []
-    dxy = None
+    eurusd = None
+    usdjpy = None
     try:
-        events = fetch_calendar(now, folder)
+        eurusd = fetch_fx(key, 'EUR/USD', now, folder)
     except Exception as exc:
-        errors['calendar'] = str(exc)[:300]
+        errors['EURUSD'] = str(exc)[:300]
     try:
-        dxy = fetch_dxy(key, now, folder)
+        usdjpy = fetch_fx(key, 'USD/JPY', now, folder)
     except Exception as exc:
-        errors['dxy'] = str(exc)[:300]
-    context = build_context(now, events, dxy, errors)
-    (folder / 'fundamentals_context.txt').write_text(context, encoding='utf-8')
-    return {'calendar_events': events, 'dxy': dxy, 'errors': errors, 'context': context}
+        errors['USDJPY'] = str(exc)[:300]
+    strength = currency_strength(eurusd, usdjpy)
+    context = build_context(now, calendar, strength, errors)
+    (folder / 'market_context.txt').write_text(context, encoding='utf-8')
+    return {
+        'calendar_events': calendar['events'],
+        'dxy': strength,
+        'errors': errors,
+        'context': context
+    }
