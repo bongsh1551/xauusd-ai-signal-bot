@@ -17,6 +17,7 @@ import requests
 MODEL = 'gemini-3.5-flash-lite'
 PROMPT_PATH = 'prompts/scalper.txt'
 HEADER = '🧪 历史行情分析测试｜不是当前交易信号，不可据此进场'
+PLAN_UPLOAD_URL = 'https://goldscalp-telegram.bongsh2002.workers.dev/update-plan'
 
 
 def save_record(path, record):
@@ -104,6 +105,27 @@ def fetch_chart(key, interval, minutes, now, folder):
     return frame, image, diagnostic
 
 
+def upload_plan(config, analysis, record):
+    meta = {
+        'run_id': record['run_id'],
+        'created_at_utc': record['created_at_utc'],
+        'created_at_myt': record['created_at_myt'],
+        'ai_model': MODEL,
+        'code_commit': record.get('code_commit', ''),
+        'charts': record.get('charts', []),
+        'source': 'github_workflow'
+    }
+    response = requests.post(
+        PLAN_UPLOAD_URL,
+        headers={'Authorization': 'Bearer ' + config['PLAN_UPDATE_TOKEN'],
+                 'Content-Type': 'application/json'},
+        json={'plan': analysis, 'meta': meta}, timeout=(10, 30))
+    result = api_json(response, 'Cloudflare plan upload', [config['PLAN_UPDATE_TOKEN']])
+    if result.get('ok') is not True:
+        raise RuntimeError('Cloudflare plan upload rejected')
+    return result
+
+
 def main():
     if os.getenv('GITHUB_EVENT_NAME') != 'workflow_dispatch':
         print('测试阶段：跳过定时任务。')
@@ -119,9 +141,10 @@ def main():
               'code_commit': os.getenv('GITHUB_SHA', ''),
               'stage': 'configuration', 'status': 'running',
               'telegram': {'attempted': False, 'sent': False},
+              'plan_upload': {'attempted': False, 'sent': False},
               'execution': 'manual_only_no_auto_trading'}
     save_record(record_path, record)
-    names = ['TWELVEDATA_API_KEY', 'GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
+    names = ['TWELVEDATA_API_KEY', 'GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'PLAN_UPDATE_TOKEN']
     config = {name: os.getenv(name, '').strip() for name in names}
     try:
         missing = [name for name in names if not config[name]]
@@ -186,6 +209,19 @@ def main():
             raise RuntimeError('Telegram rejected message')
         record['telegram'] = {'attempted': True, 'sent': True, 'truncated': False,
                               'message_id': sent.get('result', {}).get('message_id')}
+        record['stage'] = 'plan_upload'
+        record['plan_upload'] = {'attempted': True, 'sent': False}
+        save_record(record_path, record)
+        try:
+            upload_result = upload_plan(config, analysis, record)
+            record['plan_upload'] = {'attempted': True, 'sent': True,
+                                     'saved_at': upload_result.get('saved_at')}
+        except Exception as upload_error:
+            upload_message = str(upload_error) if isinstance(upload_error, RuntimeError) else type(upload_error).__name__
+            for secret in config.values():
+                if secret:
+                    upload_message = upload_message.replace(secret, '[REDACTED]')
+            record['plan_upload'] = {'attempted': True, 'sent': False, 'error': upload_message[:500]}
         record['status'] = 'completed'
         record['stage'] = 'completed'
         save_record(record_path, record)
