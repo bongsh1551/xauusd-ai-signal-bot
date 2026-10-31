@@ -130,9 +130,6 @@ def upload_plan(config, analysis, record):
 
 
 def main():
-    if os.getenv('GITHUB_EVENT_NAME') != 'workflow_dispatch':
-        print('测试阶段：跳过定时任务。')
-        return 0
     now = pd.Timestamp.now(tz='UTC')
     run_id = now.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
     folder = Path('journal') / run_id
