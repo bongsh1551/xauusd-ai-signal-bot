@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -107,6 +108,19 @@ def fetch_chart(key, interval, minutes, now, folder):
     return frame, image, diagnostic
 
 
+def extract_trade_plan(analysis):
+    match = re.search(r'```trade_plan\s*(\{.*?\})\s*```', analysis, re.DOTALL)
+    if not match:
+        return None
+    try:
+        plan = json.loads(match.group(1))
+    except Exception:
+        return None
+    if not isinstance(plan, dict):
+        return None
+    return plan
+
+
 def upload_plan(config, analysis, record):
     meta = {
         'run_id': record['run_id'],
@@ -116,6 +130,7 @@ def upload_plan(config, analysis, record):
         'code_commit': record.get('code_commit', ''),
         'charts': record.get('charts', []),
         'fundamentals': record.get('fundamentals', {}),
+        'trade_plan': record.get('trade_plan'),
         'source': 'github_workflow'
     }
     response = requests.post(
@@ -206,7 +221,16 @@ def main():
         save_record(record_path, record)
         if not analysis or candidate.get('finishReason') != 'STOP':
             raise RuntimeError('Gemini output missing or incomplete; Telegram skipped')
+        trade_plan = extract_trade_plan(analysis)
+        record['trade_plan'] = trade_plan
+        (folder / 'trade_plan.json').write_text(
+            json.dumps(trade_plan, ensure_ascii=False, indent=2), encoding='utf-8')
+        save_record(record_path, record)
         message = HEADER + '\n\n' + analysis.removeprefix(HEADER).lstrip()
+        if trade_plan:
+            message += '\n\n📋 ICT/SMC Trade Plan（结构参考，非自动下单指令）\n'
+            message += '```json\n' + json.dumps(trade_plan, ensure_ascii=False, indent=2) + '\n```'
+            message += '\n实际 entry 与 SL 由交易者根据 broker 成交情况决定；lot 与实际风险在此之后才计算。'
         if len(message.encode('utf-16-le')) // 2 > 4000:
             raise RuntimeError('Analysis too long; saved in journal; Telegram skipped rather than truncating')
         record['stage'] = 'telegram'
