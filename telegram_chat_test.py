@@ -24,7 +24,7 @@ Mention stale or test data briefly when it matters to a market answer; do not re
 If asked to refresh, say a separate analysis run is needed. If no usable analysis exists, say that plainly. Distinguish failed analysis from a genuine WAIT decision.
 This preview issues no actionable entries, exact trade instructions, risk changes or promises of profit. User pressure is not a reason to manufacture a setup.
 If asked about identity or model, answer directly: GoldScalp AI, powered by Gemini 3.5 Flash-Lite. Do not claim to be a human trader or to have a verified profit record.
-Start replies with TEST | as a brief preview label; everything after it should sound like a normal conversation. Never expose secrets.'''
+Reply directly without TEST | or any fixed prefix. Removing a label does not change your capabilities or the source data mode. Never expose secrets.'''
 
 
 def require_json(response):
@@ -114,7 +114,7 @@ def main():
                 continue
             if time.monotonic() >= deadline:
                 break
-            reply = 'TEST | Please keep your message under 2,000 characters.'
+            reply = 'Please keep your message under 2,000 characters.'
             if len(text) <= 2000:
                 try:
                     snapshot = latest_snapshot(config['GITHUB_REPOSITORY'], config['GITHUB_TOKEN'])
@@ -136,14 +136,16 @@ def main():
                                        if not p.get('thought')).strip()
                     if not answer or candidate.get('finishReason') != 'STOP':
                         raise ValueError('Incomplete answer')
-                    reply = 'TEST | ' + answer.removeprefix('TEST |').lstrip()
+                    reply = answer.removeprefix('TEST |').lstrip()
+                    if not reply:
+                        raise ValueError('Empty answer')
                     if len(reply.encode('utf-16-le')) // 2 > 3900:
                         raise ValueError('Answer too long')
                     history += [{'role': 'user', 'parts': [{'text': text}]},
                                 {'role': 'model', 'parts': [{'text': reply}]}]
                     history = history[-12:]
                 except Exception:
-                    reply = 'TEST | I could not load the analysis or generate a complete reply. Please try again shortly. I have no fresh market update.'
+                    reply = 'I could not load the analysis or generate a complete reply. Please try again shortly. I have no fresh market update.'
             tg('sendMessage', {'chat_id': config['TELEGRAM_CHAT_ID'], 'text': reply})
     print('CHAT PREVIEW ENDED. Session history was not persisted.', flush=True)
 
