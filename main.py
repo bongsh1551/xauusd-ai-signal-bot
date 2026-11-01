@@ -108,17 +108,15 @@ def fetch_chart(key, interval, minutes, now, folder):
     return frame, image, diagnostic
 
 
-def extract_trade_plan(analysis):
-    match = re.search(r'```trade_plan\s*(\{.*?\})\s*```', analysis, re.DOTALL)
+def extract_json_block(analysis, label):
+    match = re.search(r'```' + label + r'\s*(\{.*?\})\s*```', analysis, re.DOTALL)
     if not match:
         return None
     try:
-        plan = json.loads(match.group(1))
+        value = json.loads(match.group(1))
     except Exception:
         return None
-    if not isinstance(plan, dict):
-        return None
-    return plan
+    return value if isinstance(value, dict) else None
 
 
 def upload_plan(config, analysis, record):
@@ -131,6 +129,8 @@ def upload_plan(config, analysis, record):
         'charts': record.get('charts', []),
         'fundamentals': record.get('fundamentals', {}),
         'trade_plan': record.get('trade_plan'),
+        'market_watch': record.get('market_watch'),
+        'current_price': record.get('current_price'),
         'source': 'github_workflow'
     }
     response = requests.post(
@@ -178,11 +178,14 @@ def main():
                        + '\n不编造宏观背景，不把新时间戳等同于有效行情。只基于以下输入。')
         parts = [{'text': instruction}]
         (folder / 'execution_instruction.txt').write_text(instruction, encoding='utf-8')
+        m5_frame = None
         for interval, minutes in [('5min', 5), ('15min', 15), ('1h', 60)]:
             record['stage'] = 'fetch_' + interval
             save_record(record_path, record)
             frame, image, diagnostic = fetch_chart(config['TWELVEDATA_API_KEY'], interval, minutes, now, folder)
             record['charts'].append(diagnostic)
+            if interval == '5min':
+                m5_frame = frame
             text = (interval + ' 已收线 OHLC，UTC：\n'
                     + frame.tail(40).to_csv(index_label='timestamp_utc')
                     + '\n程序诊断：' + json.dumps(diagnostic, ensure_ascii=False))
@@ -221,10 +224,16 @@ def main():
         save_record(record_path, record)
         if not analysis or candidate.get('finishReason') != 'STOP':
             raise RuntimeError('Gemini output missing or incomplete; Telegram skipped')
-        trade_plan = extract_trade_plan(analysis)
+        trade_plan = extract_json_block(analysis, 'trade_plan')
+        market_watch = extract_json_block(analysis, 'market_watch')
         record['trade_plan'] = trade_plan
+        record['market_watch'] = market_watch
+        if m5_frame is not None:
+            record['current_price'] = float(m5_frame.Close.iloc[-1])
         (folder / 'trade_plan.json').write_text(
             json.dumps(trade_plan, ensure_ascii=False, indent=2), encoding='utf-8')
+        (folder / 'market_watch.json').write_text(
+            json.dumps(market_watch, ensure_ascii=False, indent=2), encoding='utf-8')
         save_record(record_path, record)
         message = HEADER + '\n\n' + analysis.removeprefix(HEADER).lstrip()
         if trade_plan:
