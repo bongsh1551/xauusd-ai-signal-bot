@@ -22,6 +22,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run signal bot
+        id: signal_bot
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -38,3 +39,32 @@ jobs:
           path: journal/
           if-no-files-found: ignore
           retention-days: 90
+
+  notify_failure:
+    needs: analyze
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send failure alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 - <<'PY'
+          import os, urllib.parse, urllib.request
+          token = os.environ['TELEGRAM_BOT_TOKEN']
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          run_id = '${{ github.run_id }}'
+          run_url = 'https://github.com/${{ github.repository }}/actions/runs/' + run_id
+          text = (
+              '❌ XAUUSD 分析失败\\n\\n'
+              'Run ID: ' + run_id + '\\n'
+              '仓库: ${{ github.repository }}\\n'
+              '时间: ' + '${{ github.event.head_commit.timestamp }}' + '\\n'
+              '请检查 GitHub Actions 日志。\\n'
+              + run_url
+          )
+          data = urllib.parse.urlencode({'chat_id': chat_id, 'text': text}).encode()
+          req = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendMessage', data=data)
+          urllib.request.urlopen(req, timeout=30)
+          PY
