@@ -85,8 +85,7 @@ def fetch_chart(key, interval, minutes, now, folder):
         'run_is_myt_weekend': bool(now.tz_convert('Asia/Kuala_Lumpur').dayofweek >= 5),
         'market_session_verified': False,
         'recent_range_min': float(ranges.min()), 'recent_range_max': float(ranges.max()),
-        'recent_range_median': float(ranges.median()),
-        'diagnostic_narrow_range_threshold_usd': 0.05,
+        'recent_range_median': float(ranges.median()), 'diagnostic_narrow_range_threshold_usd': 0.05,
         'recent_narrow_range_count': int((ranges <= 0.050000001).sum()),
         'recent_zero_range_count': int((ranges.abs() <= 0.000000001).sum()),
         'time_gaps_in_sample': int((frame.index.to_series().diff() > pd.Timedelta(minutes=minutes)).sum()),
@@ -266,6 +265,7 @@ def main():
                 if secret:
                     upload_message = upload_message.replace(secret, '[REDACTED]')
             record['plan_upload'] = {'attempted': True, 'sent': False, 'error': upload_message[:500]}
+            raise RuntimeError('Cloudflare plan upload failed: ' + upload_message)
         record['status'] = 'completed'
         record['stage'] = 'completed'
         save_record(record_path, record)
