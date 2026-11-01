@@ -178,6 +178,7 @@ def main():
         parts = [{'text': instruction}]
         (folder / 'execution_instruction.txt').write_text(instruction, encoding='utf-8')
         m5_frame = None
+        m5_diagnostic = None
         for interval, minutes in [('5min', 5), ('15min', 15), ('1h', 60)]:
             record['stage'] = 'fetch_' + interval
             save_record(record_path, record)
@@ -185,6 +186,7 @@ def main():
             record['charts'].append(diagnostic)
             if interval == '5min':
                 m5_frame = frame
+                m5_diagnostic = diagnostic
             text = (interval + ' 已收线 OHLC，UTC：\n'
                     + frame.tail(40).to_csv(index_label='timestamp_utc')
                     + '\n程序诊断：' + json.dumps(diagnostic, ensure_ascii=False))
@@ -225,20 +227,49 @@ def main():
             raise RuntimeError('Gemini output missing or incomplete; Telegram skipped')
         trade_plan = extract_json_block(analysis, 'trade_plan')
         market_watch = extract_json_block(analysis, 'market_watch')
+        safety_reasons = []
+        if m5_diagnostic is None:
+            safety_reasons.append('M5 diagnostic unavailable')
+        else:
+            if m5_diagnostic.get('timestamp_stale'):
+                safety_reasons.append('M5 data stale')
+            if m5_diagnostic.get('run_is_myt_weekend'):
+                safety_reasons.append('weekend')
+            if not m5_diagnostic.get('market_session_verified'):
+                safety_reasons.append('market session unverified')
+        safety_gate = {'passed': not safety_reasons, 'reasons': safety_reasons}
+        record['safety_gate'] = safety_gate
+        if not safety_gate['passed']:
+            analysis = re.sub(r'状态：\s*(WAIT|APPROACH|CONFIRMED)([^\n]*)', '状态：WAIT（安全闸拦截）', analysis, count=1)
+            if trade_plan and trade_plan.get('status') == 'ENTRY_READY':
+                trade_plan['status'] = 'WAIT'
+                trade_plan['blocked_reason'] = '; '.join(safety_reasons)
+            if market_watch:
+                for zone in market_watch.get('zones', []) or []:
+                    if zone.get('status') == 'APPROACH':
+                        zone['status'] = 'WAIT'
         record['trade_plan'] = trade_plan
         record['market_watch'] = market_watch
-        if m5_frame is not None:
-            record['current_price'] = float(m5_frame.Close.iloc[-1])
+        current_price = float(m5_frame.Close.iloc[-1]) if m5_frame is not None else None
+        if current_price is not None:
+            record['current_price'] = current_price
         (folder / 'trade_plan.json').write_text(
             json.dumps(trade_plan, ensure_ascii=False, indent=2), encoding='utf-8')
         (folder / 'market_watch.json').write_text(
             json.dumps(market_watch, ensure_ascii=False, indent=2), encoding='utf-8')
         save_record(record_path, record)
-        message = HEADER + '\n\n' + analysis.removeprefix(HEADER).lstrip()
-        if trade_plan:
-            message += '\n\n📋 ICT/SMC Trade Plan（结构参考，非自动下单指令）\n'
-            message += '```json\n' + json.dumps(trade_plan, ensure_ascii=False, indent=2) + '\n```'
-            message += '\n实际 entry 与 SL 由交易者根据 broker 成交情况决定；lot 与实际风险在此之后才计算。'
+        if not safety_gate['passed']:
+            message = (HEADER + '\n\n状态：WAIT（安全闸拦截）\n'
+                       + '时间：' + record['created_at_myt'] + '\n'
+                       + ('价格：' + f'{current_price:.2f}' + '\n' if current_price is not None else '')
+                       + '原因：' + '; '.join(safety_reasons) + '\n'
+                       + '未满足实时信号安全条件；不提供 ENTRY_READY。')
+        else:
+            message = HEADER + '\n\n' + analysis.removeprefix(HEADER).lstrip()
+            if trade_plan:
+                message += '\n\n📋 ICT/SMC Trade Plan（结构参考，非自动下单指令）\n'
+                message += '```json\n' + json.dumps(trade_plan, ensure_ascii=False, indent=2) + '\n```'
+                message += '\n实际 entry 与 SL 由交易者根据 broker 成交情况决定；lot 与实际风险在此之后才计算。'
         if len(message.encode('utf-16-le')) // 2 > 4000:
             raise RuntimeError('Analysis too long; saved in journal; Telegram skipped rather than truncating')
         record['stage'] = 'telegram'
