@@ -200,7 +200,8 @@ def main():
         record['fundamentals'] = {
             'calendar_event_count': len(fundamentals['calendar_events']),
             'calendar_events': fundamentals['calendar_events'],
-            'dxy': fundamentals['dxy'],
+            'calendar_coverage': fundamentals['calendar_coverage'],
+            'currency_strength': fundamentals['currency_strength'],
             'errors': fundamentals['errors']
         }
         parts.append({'text': fundamentals['context']})

@@ -21,11 +21,13 @@ def fetch_calendar(now, folder):
         (folder / 'calendar_raw.json').write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         selected = []
+        timestamps = []
         for item in data:
             try:
                 event_time = pd.Timestamp(item.get('date'), tz='UTC')
             except Exception:
                 continue
+            timestamps.append(event_time)
             if not (now <= event_time <= now + pd.Timedelta(hours=24)):
                 continue
             impact = str(item.get('impact', '')).strip().lower()
@@ -43,10 +45,18 @@ def fetch_calendar(now, folder):
         selected.sort(key=lambda x: x['time_utc'])
         (folder / 'calendar_selected.json').write_text(
             json.dumps(selected, ensure_ascii=False, indent=2), encoding='utf-8')
+        horizon_end = now + pd.Timedelta(hours=24)
+        latest_event = max(timestamps) if timestamps else None
+        coverage = 'full' if latest_event is not None and latest_event >= horizon_end else 'partial'
         status = 'ok' if selected else 'no_events'
-        return {'status': status, 'events': selected, 'error': None}
+        return {'status': status, 'events': selected, 'error': None,
+                'coverage': coverage,
+                'calendar_last_event_utc': latest_event.isoformat() if latest_event is not None else None,
+                'requested_horizon_end_utc': horizon_end.isoformat()}
     except Exception as exc:
-        return {'status': 'error', 'events': [], 'error': str(exc)[:300]}
+        return {'status': 'error', 'events': [], 'error': str(exc)[:300],
+                'coverage': 'unavailable', 'calendar_last_event_utc': None,
+                'requested_horizon_end_utc': (now + pd.Timedelta(hours=24)).isoformat()}
 
 
 def fetch_fx(key, symbol, now, folder):
@@ -68,12 +78,15 @@ def fetch_fx(key, symbol, now, folder):
     last_close = float(frame.Close.iloc[-1])
     previous_close = float(frame.Close.iloc[-5])
     change_pct = (last_close / previous_close - 1) * 100
+    age_minutes = (now - (frame.index[-1] + pd.Timedelta(hours=1))).total_seconds() / 60
     result = {
         'symbol': symbol,
         'last_close': last_close,
         'change_4h_pct': round(change_pct, 4),
         'last_closed_utc': frame.index[-1].isoformat(),
-        'closed_h1_candles': int(len(frame))
+        'closed_h1_candles': int(len(frame)),
+        'minutes_since_close': round(age_minutes, 2),
+        'stale': bool(age_minutes > 120)
     }
     (folder / f"{symbol.replace('/', '').lower()}_h1.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -84,6 +97,11 @@ def currency_strength(eurusd, usdjpy):
     if not eurusd or not usdjpy:
         return {'status': 'UNAVAILABLE', 'usd_vs_eur_pct': None,
                 'usd_vs_jpy_pct': None, 'reason': 'EURUSD or USDJPY data unavailable'}
+    if eurusd.get('stale') or usdjpy.get('stale'):
+        return {'status': 'UNAVAILABLE', 'usd_vs_eur_pct': None,
+                'usd_vs_jpy_pct': None,
+                'reason': 'EURUSD or USDJPY last closed H1 candle is older than 120 minutes',
+                'eurusd': eurusd, 'usdjpy': usdjpy}
     usd_vs_eur = -float(eurusd['change_4h_pct'])
     usd_vs_jpy = float(usdjpy['change_4h_pct'])
     if usd_vs_eur > 0 and usd_vs_jpy > 0:
@@ -94,7 +112,7 @@ def currency_strength(eurusd, usdjpy):
         status = 'MIXED'
     return {'status': status, 'usd_vs_eur_pct': round(usd_vs_eur, 4),
             'usd_vs_jpy_pct': round(usd_vs_jpy, 4),
-            'method': 'last 4 closed H1 candles; consistent direction required',
+            'method': 'last 4 closed H1 candles; consistent direction and freshness required',
             'eurusd': eurusd, 'usdjpy': usdjpy}
 
 
@@ -106,6 +124,8 @@ def build_context(now, calendar, strength, errors):
         ''
     ]
     lines.append('【Fundamental：经济日历】')
+    lines.append('覆盖状态：' + calendar.get('coverage', 'unavailable') +
+                 '；请求范围截至：' + str(calendar.get('requested_horizon_end_utc')))
     if calendar['status'] == 'ok':
         lines.append('状态：已获取；未来 24 小时高/中影响力事件 ' + str(len(calendar['events'])) + ' 个。')
         for event in calendar['events']:
@@ -120,10 +140,10 @@ def build_context(now, calendar, strength, errors):
     lines.extend([
         '',
         '解读规则：',
-        '1. USD_STRONG：美元对欧元与日元最近 4 根 H1 已收线均走强；通常对黄金构成压力，但不是自动 SELL。',
-        '2. USD_WEAK：美元对欧元与日元最近 4 根 H1 已收线均走弱；通常对黄金构成支持，但不是自动 BUY。',
+        '1. USD_STRONG：美元对欧元与日元最近 4 根 H1 已收线均走强且数据不陈旧；通常对黄金构成压力，但不是自动 SELL。',
+        '2. USD_WEAK：美元对欧元与日元最近 4 根 H1 已收线均走弱且数据不陈旧；通常对黄金构成支持，但不是自动 BUY。',
         '3. MIXED：两个货币对方向不一致，不能声称美元全面走强或走弱。',
-        '4. UNAVAILABLE：资料不足，不要编造美元方向。',
+        '4. UNAVAILABLE：资料不足或数据陈旧，不要编造美元方向。',
         '5. 这是 intermarket confluence，不是 Fundamental 新闻，也不是黄金进场信号；最终必须与 XAUUSD H1/M15/M5 结构共振。',
         '6. 没有真实 order flow、volume 或订单簿资料时，不得声称看到订单流。',
         ''
@@ -134,13 +154,13 @@ def build_context(now, calendar, strength, errors):
         '2. 新闻与数据是 confluence，不是自动禁止交易的过滤器。',
         '3. 高影响力事件临近时，提醒波动、spread 与流动性风险；事件就在几分钟内时优先 WAIT 或要求更强确认。',
         '4. 不预测数据结果；只说明可能情景与结构失效条件。',
-        '5. 先分别说明 Fundamental 状态与 Currency Strength 状态；证据不足时明确写“不明确”，不强行给方向。',
+        '5. 先分别说明 Fundamental status、calendar coverage 与 Currency Strength status；证据不足时明确写“不明确”，不强行给方向。',
         ''
     ])
     if errors:
         lines.append('数据错误：' + json.dumps(errors, ensure_ascii=False))
         lines.append('')
-    lines.append('请在分析开头分别给出：Fundamental status、USD strength status，以及它们是否与 XAUUSD 结构共振；再进行 ICT/SMC 分析。')
+    lines.append('请在分析开头分别给出：Fundamental status、calendar coverage、USD strength status，以及它们是否与 XAUUSD 结构共振；再进行 ICT/SMC 分析。')
     return '\n'.join(lines)
 
 
@@ -162,7 +182,8 @@ def collect_fundamentals(key, now, folder):
     (folder / 'market_context.txt').write_text(context, encoding='utf-8')
     return {
         'calendar_events': calendar['events'],
-        'dxy': strength,
+        'calendar_coverage': calendar.get('coverage', 'unavailable'),
+        'currency_strength': strength,
         'errors': errors,
         'context': context
     }
