@@ -1,0 +1,73 @@
+name: SenseNova Network Check
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/sensenova-network-check.yml']
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  network_check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check DNS and unauthenticated HTTPS without model calls
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import time
+          from urllib.parse import urlparse
+
+          targets = [
+              ('sensenova', 'https://token.sensenova.ai/v1/chat/completions'),
+              ('control', 'https://github.com/')
+          ]
+          results = []
+          for label, url in targets:
+              host = urlparse(url).hostname
+              try:
+                  dns = subprocess.run(['getent', 'ahosts', host], capture_output=True,
+                                       text=True, timeout=10)
+                  addresses = sorted({line.split()[0] for line in dns.stdout.splitlines() if line.split()})
+                  results.append({'target': label, 'check': 'dns', 'exit_code': dns.returncode,
+                                  'addresses': addresses})
+              except subprocess.TimeoutExpired:
+                  results.append({'target': label, 'check': 'dns', 'error': 'timeout'})
+              for family in ['-4', '-6']:
+                  start = time.monotonic()
+                  command = ['curl', family, '--silent', '--show-error', '--head',
+                             '--output', '/dev/null', '--connect-timeout', '10',
+                             '--max-time', '20', '--retry', '0', '--write-out',
+                             'http=%{http_code} dns=%{time_namelookup} tcp=%{time_connect} tls=%{time_appconnect} first_byte=%{time_starttransfer} total=%{time_total} peer=%{remote_ip}', url]
+                  try:
+                      response = subprocess.run(command, capture_output=True, text=True, timeout=25)
+                      item = {'target': label, 'check': 'https_head', 'family': family,
+                              'exit_code': response.returncode, 'metrics': response.stdout.strip(),
+                              'elapsed_seconds': round(time.monotonic() - start, 2)}
+                  except subprocess.TimeoutExpired:
+                      item = {'target': label, 'check': 'https_head', 'family': family,
+                              'error': 'process_timeout'}
+                  results.append(item)
+          report = {'scope': 'No credentials, no inference POST, no Telegram; HEAD connectivity only',
+                    'results': results}
+          text = json.dumps(report, indent=2)
+          pathlib.Path('network-report.json').write_text(text, encoding='utf-8')
+          print(text)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+              summary.write('## Network diagnostic only\nNo model inference requested. HTTP errors may still prove HTTPS reachability. IPv6 failure alone does not establish a model failure.\n```json\n' + text + '\n```\n')
+          PY
+
+      - name: Save diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensenova-network-${{ github.run_id }}
+          path: network-report.json
+          if-no-files-found: error
+          retention-days: 7
