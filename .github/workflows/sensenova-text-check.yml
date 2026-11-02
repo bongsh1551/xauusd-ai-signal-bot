@@ -1,0 +1,92 @@
+name: SenseNova Single Text Check
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/sensenova-text-check.yml']
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  text_check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: One authenticated text request without retries
+        env:
+          SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import time
+          import urllib.error
+          import urllib.request
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          report = {'scope': 'Single text inference; no images, market data or Telegram',
+                    'model': 'sensenova-6.8-flash-lite', 'attempts': 0,
+                    'automatic_retries': 0}
+          key = os.environ.get('SENSENOVA_API_KEY', '').strip()
+          start = time.monotonic()
+          if not key:
+              report['result'] = 'MISSING_KEY_NO_REQUEST'
+          else:
+              payload = {'model': report['model'],
+                         'messages': [{'role': 'user', 'content': 'Reply with exactly OK.'}],
+                         'temperature': 0.2, 'reasoning_effort': 'low',
+                         'max_tokens': 128, 'stream': False}
+              request = urllib.request.Request(
+                  'https://token.sensenova.ai/v1/chat/completions',
+                  data=json.dumps(payload).encode('utf-8'),
+                  headers={'Authorization': 'Bearer ' + key,
+                           'Content-Type': 'application/json'}, method='POST')
+              opener = urllib.request.build_opener(NoRedirect())
+              report['attempts'] = 1
+              try:
+                  with opener.open(request, timeout=60) as response:
+                      report['http_status'] = response.status
+                      raw = response.read(1048577)
+                  if len(raw) > 1048576:
+                      report['result'] = 'RESPONSE_TOO_LARGE'
+                  else:
+                      body = json.loads(raw)
+                      choices = body.get('choices') if isinstance(body, dict) else None
+                      choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+                      message = choice.get('message')
+                      content = message.get('content') if isinstance(message, dict) else None
+                      report['content_length'] = len(content) if isinstance(content, str) else None
+                      report['content_is_ok'] = isinstance(content, str) and content.strip() == 'OK'
+                      report['finish_is_stop'] = choice.get('finish_reason') == 'stop'
+                      report['result'] = 'TEXT_OK' if report['content_is_ok'] and report['finish_is_stop'] else 'RESPONSE_REQUIRES_REVIEW'
+                      usage = body.get('usage') if isinstance(body, dict) else None
+                      report['usage'] = {k: usage[k] for k in ('prompt_tokens', 'completion_tokens', 'total_tokens') if isinstance(usage, dict) and type(usage.get(k)) in (int, float)}
+              except urllib.error.HTTPError as exc:
+                  report.update(result='HTTP_ERROR', http_status=exc.code)
+              except urllib.error.URLError as exc:
+                  report.update(result='TRANSPORT_ERROR', exception_type=type(exc).__name__,
+                                reason_type=type(exc.reason).__name__)
+              except Exception as exc:
+                  report.update(result='REQUEST_OR_RESPONSE_ERROR', exception_type=type(exc).__name__)
+          report['elapsed_seconds'] = round(time.monotonic() - start, 2)
+          text = json.dumps(report, indent=2)
+          pathlib.Path('text-report.json').write_text(text, encoding='utf-8')
+          print(text)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+              summary.write('## Single text diagnostic\nJob completion is not proof of model success; inspect result. No secret or raw response is logged.\n```json\n' + text + '\n```\n')
+          PY
+
+      - name: Save diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensenova-text-${{ github.run_id }}
+          path: text-report.json
+          if-no-files-found: error
+          retention-days: 7
