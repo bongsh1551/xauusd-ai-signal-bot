@@ -1,27 +1,71 @@
-"""Fail closed before publishing unverified analysis to Cloudflare."""
+"""Fail closed before Telegram and Cloudflare; journal expected safety blocks."""
 import sys
 import sensenova_runner as runner
 
 _original_upload = runner.pipeline.upload_plan
+_original_save = runner.save_record
+_BLOCK_MESSAGE = 'Safety block: unverified analysis retained in journal; publication skipped'
+_block_pending = False
+_block_saved = False
 
-def guarded_upload(config, analysis, record):
+class SafetyBlocked(RuntimeError):
+    pass
+
+def verified_record(record):
     gate = record.get('safety_gate')
     charts = record.get('charts')
-    verified = (record.get('mode') == 'live'
-                and isinstance(gate, dict)
-                and gate.get('passed') is True
-                and gate.get('reasons') == []
-                and isinstance(charts, list)
-                and len(charts) == 3
-                and {c.get('interval') for c in charts if isinstance(c, dict)} == {'5min', '15min', '1h'}
-                and all(isinstance(c, dict)
-                        and c.get('market_session_verified') is True
-                        and c.get('timestamp_stale') is False
-                        and c.get('run_is_myt_weekend') is False for c in charts))
-    if not verified:
+    return (record.get('mode') == 'live'
+            and isinstance(gate, dict)
+            and gate.get('passed') is True
+            and gate.get('reasons') == []
+            and isinstance(charts, list)
+            and len(charts) == 3
+            and {c.get('interval') for c in charts if isinstance(c, dict)} == {'5min', '15min', '1h'}
+            and all(isinstance(c, dict)
+                    and c.get('market_session_verified') is True
+                    and c.get('timestamp_stale') is False
+                    and c.get('run_is_myt_weekend') is False for c in charts))
+
+def guarded_upload(config, analysis, record):
+    if not verified_record(record):
         raise RuntimeError('Publication guard: test/unverified analysis retained in journal; Cloudflare upload blocked')
     return _original_upload(config, analysis, record)
 
-if __name__ == '__main__':
+def guarded_save(path, record):
+    global _block_pending, _block_saved
+    if (record.get('stage') == 'telegram'
+            and record.get('status') == 'running'
+            and not verified_record(record)):
+        record['telegram'] = {'attempted': False, 'sent': False}
+        record['plan_upload'] = {'attempted': False, 'sent': False}
+        record['publication_decision'] = 'BLOCKED_UNVERIFIED'
+        _original_save(path, record)
+        _block_pending = True
+        raise SafetyBlocked(_BLOCK_MESSAGE)
+    if (_block_pending and record.get('stage') == 'telegram'
+            and record.get('status') == 'failed'
+            and record.get('error') == _BLOCK_MESSAGE):
+        record['status'] = 'blocked'
+        record['stage'] = 'safety_blocked'
+        record.pop('error', None)
+        record['blocked_reason'] = _BLOCK_MESSAGE
+        _original_save(path, record)
+        _block_pending = False
+        _block_saved = True
+        return
+    return _original_save(path, record)
+
+def main():
+    global _block_pending, _block_saved
+    _block_pending = False
+    _block_saved = False
     runner.pipeline.upload_plan = guarded_upload
-    sys.exit(runner.main())
+    runner.save_record = guarded_save
+    result = runner.main()
+    if result == 1 and _block_saved and not _block_pending:
+        print('Safety block journaled; no Telegram or Cloudflare publication; live readiness NOT verified')
+        return 0
+    return result
+
+if __name__ == '__main__':
+    sys.exit(main())
