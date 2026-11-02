@@ -1,0 +1,100 @@
+name: SenseNova Three Chart Check
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/sensenova-three-chart-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sensenova-three-chart-check
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: One three-chart request without publication
+        env:
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
+        run: |
+          python - <<'PY'
+          import base64, json, os, pathlib, time
+          from types import SimpleNamespace
+          import pandas as pd
+          import requests
+          from requests.adapters import HTTPAdapter
+          import main as pipeline
+          import sensenova_runner as runner
+          folder = pathlib.Path('three-chart-report')
+          folder.mkdir()
+          report = {'result': 'NOT_STARTED', 'model': runner.MODEL, 'code_commit': os.getenv('GITHUB_SHA'), 'attempts': 0, 'automatic_retries': 0, 'image_count': 0, 'telegram_sent': False, 'plan_uploaded': False, 'max_tokens': 8192, 'charts': []}
+          start = time.monotonic()
+          session = requests.Session()
+          session.mount('https://', HTTPAdapter(max_retries=0))
+          pipeline.requests = SimpleNamespace(get=session.get)
+          try:
+              data_key = os.environ['TWELVEDATA_API_KEY'].strip()
+              ai_key = os.environ['SENSENOVA_API_KEY'].strip()
+              if not data_key or not ai_key:
+                  raise ValueError('Missing required key')
+              now = pd.Timestamp.now(tz='UTC')
+              instruction = pathlib.Path(pipeline.PROMPT_PATH).read_text(encoding='utf-8')
+              instruction += '\nISOLATED HISTORICAL TEST ONLY. Not a live signal. Use only supplied charts and OHLC. No verified daily bias or macro context supplied: do not invent either. Do not size lots. Report insufficient data when appropriate. UTC: ' + now.isoformat()
+              content = [{'type': 'text', 'text': instruction}]
+              for interval, minutes in [('5min', 5), ('15min', 15), ('1h', 60)]:
+                  frame, image, diagnostic = pipeline.fetch_chart(data_key, interval, minutes, now, folder)
+                  report['charts'].append(diagnostic)
+                  content.append({'type': 'text', 'text': interval + ' closed OHLC UTC:\n' + frame.tail(40).to_csv(index_label='timestamp_utc') + '\nDiagnostics: ' + json.dumps(diagnostic)})
+                  content.append({'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,' + base64.b64encode(image).decode('ascii')}})
+                  report['image_count'] += 1
+              assert report['image_count'] == 3
+              payload = {'model': runner.MODEL, 'messages': [{'role': 'user', 'content': content}], 'temperature': 0.2, 'reasoning_effort': 'low', 'max_tokens': 8192, 'stream': False}
+              report['request_json_bytes'] = len(json.dumps(payload).encode())
+              report['attempts'] = 1
+              response = session.post(runner.ENDPOINT, headers={'Authorization': 'Bearer ' + ai_key, 'Content-Type': 'application/json'}, json=payload, timeout=(10, 120), allow_redirects=False)
+              report['http_status'] = response.status_code
+              if response.status_code != 200:
+                  raise ValueError('HTTP response rejected')
+              body = response.json()
+              choice = body['choices'][0]
+              message = choice['message']
+              finish = choice.get('finish_reason')
+              report['finish_reason'] = finish if finish in ('stop', 'length', 'content_filter', None) else 'OTHER'
+              value = message.get('content')
+              report['content_type'] = type(value).__name__
+              text = runner.normalize_content(value).strip()
+              report['content_length'] = len(text)
+              usage = body.get('usage', {})
+              report['usage'] = {k: usage[k] for k in ('prompt_tokens', 'completion_tokens', 'total_tokens') if type(usage.get(k)) in (int, float)}
+              (folder / 'analysis.txt').write_text(text, encoding='utf-8')
+              if finish != 'stop' or not text:
+                  raise ValueError('Incomplete model output')
+              report['analysis_status'] = runner.validate_analysis(text)
+              report['result'] = 'THREE_CHART_CONTRACT_OK_PRICE_REVIEW_REQUIRED'
+          except Exception as exc:
+              report['result'] = 'REQUIRES_REVIEW'
+              report['error_type'] = type(exc).__name__
+          finally:
+              session.close()
+              report['elapsed_seconds'] = round(time.monotonic() - start, 2)
+              text = json.dumps(report, ensure_ascii=False, indent=2)
+              (folder / 'report.json').write_text(text, encoding='utf-8')
+              print('===== THREE_CHART_REPORT_START =====\n' + text + '\n===== THREE_CHART_REPORT_END =====')
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as f:
+                  f.write('## Isolated three-chart diagnostic\nNo publication. Contract success does not verify price accuracy or live readiness.\n```json\n' + text + '\n```\n')
+          PY
+      - name: Save charts and diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensenova-three-chart-${{ github.run_id }}
+          path: three-chart-report/
+          if-no-files-found: error
+          retention-days: 7
