@@ -47,7 +47,6 @@ def guarded_save(path, record):
             and record.get('error') == _BLOCK_MESSAGE):
         record['status'] = 'blocked'
         record['stage'] = 'safety_blocked'
-        record.pop('error', None)
         record['blocked_reason'] = _BLOCK_MESSAGE
         _original_save(path, record)
         _block_pending = False
