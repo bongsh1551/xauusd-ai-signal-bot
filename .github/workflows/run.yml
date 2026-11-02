@@ -7,6 +7,10 @@ on:
         - cron: '2-59/5 0-14 * * 1-5'
   workflow_dispatch:
 
+concurrency:
+  group: goldscalp-analysis
+  cancel-in-progress: false
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
