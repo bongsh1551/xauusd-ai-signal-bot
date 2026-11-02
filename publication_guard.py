@@ -1,6 +1,7 @@
 """Fail closed before Telegram and Cloudflare; journal expected safety blocks."""
 import sys
 import sensenova_runner as runner
+from sensenova_transport import install
 
 _original_upload = runner.pipeline.upload_plan
 _original_save = runner.save_record
@@ -60,6 +61,7 @@ def main():
     _block_saved = False
     runner.pipeline.upload_plan = guarded_upload
     runner.save_record = guarded_save
+    install(runner)
     result = runner.main()
     if result == 1 and _block_saved and not _block_pending:
         print('Safety block journaled; no Telegram or Cloudflare publication; live readiness NOT verified')
