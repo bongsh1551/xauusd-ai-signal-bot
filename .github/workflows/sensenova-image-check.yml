@@ -43,7 +43,7 @@ jobs:
 
           report = {'scope': 'One synthetic code image; no market data, Telegram or plan upload',
                     'model': 'sensenova-6.8-flash-lite', 'attempts': 0,
-                    'automatic_retries': 0, 'image_count': 1,
+                    'automatic_retries': 0, 'image_count': 1, 'max_tokens': 512,
                     'requests_version': requests.__version__,
                     'urllib3_version': urllib3.__version__,
                     'code_commit': os.environ.get('GITHUB_SHA', '')}
@@ -60,7 +60,7 @@ jobs:
           payload = {'model': report['model'], 'messages': [{'role': 'user', 'content': [
               {'type': 'text', 'text': 'Read the six-character code visible in this image. Reply with only those six characters, no explanation.'},
               {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,' + base64.b64encode(image).decode('ascii')}}
-          ]}], 'temperature': 0.2, 'reasoning_effort': 'low', 'max_tokens': 128, 'stream': False}
+          ]}], 'temperature': 0.2, 'reasoning_effort': 'low', 'max_tokens': 512, 'stream': False}
           report['request_json_bytes'] = len(json.dumps(payload).encode('utf-8'))
           key = os.environ.get('SENSENOVA_API_KEY', '').strip()
           start = time.monotonic()
@@ -85,12 +85,23 @@ jobs:
                           choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
                           message = choice.get('message')
                           content = message.get('content') if isinstance(message, dict) else None
+                          finish = choice.get('finish_reason')
+                          report['finish_reason'] = finish if finish in ('stop', 'length', 'content_filter', 'tool_calls', 'function_call', None) else 'UNRECOGNIZED'
+                          report['content_type'] = type(content).__name__
+                          reasoning = message.get('reasoning') if isinstance(message, dict) else None
+                          if reasoning is None and isinstance(message, dict):
+                              reasoning = message.get('reasoning_content')
+                          report['reasoning_present'] = reasoning is not None
+                          report['reasoning_length'] = len(reasoning) if isinstance(reasoning, str) else None
                           report['content_length'] = len(content) if isinstance(content, str) else None
                           report['image_code_matches'] = isinstance(content, str) and content.strip() == expected
-                          report['finish_is_stop'] = choice.get('finish_reason') == 'stop'
+                          report['finish_is_stop'] = finish == 'stop'
                           report['result'] = 'IMAGE_OK' if report['image_code_matches'] and report['finish_is_stop'] else 'RESPONSE_REQUIRES_REVIEW'
                           usage = body.get('usage') if isinstance(body, dict) else None
                           report['usage'] = {k: usage[k] for k in ('prompt_tokens', 'completion_tokens', 'total_tokens') if isinstance(usage, dict) and type(usage.get(k)) in (int, float)}
+                          details = usage.get('completion_tokens_details') if isinstance(usage, dict) else None
+                          if isinstance(details, dict) and type(details.get('reasoning_tokens')) in (int, float):
+                              report['usage']['reasoning_tokens'] = details['reasoning_tokens']
               except Exception as exc:
                   report.update(result='REQUEST_OR_RESPONSE_ERROR', exception_types=error_types(exc))
           report['elapsed_seconds'] = round(time.monotonic() - start, 2)
