@@ -1,0 +1,110 @@
+name: SenseNova Single Image Check
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/sensenova-image-check.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image_check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install same dependencies as analysis
+        run: pip install -r requirements.txt
+      - name: One synthetic image request without retries
+        env:
+          SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
+        run: |
+          python - <<'PY'
+          import base64
+          import io
+          import json
+          import os
+          import pathlib
+          import secrets
+          import time
+          import matplotlib
+          matplotlib.use('Agg')
+          import matplotlib.pyplot as plt
+          import requests
+          import urllib3
+          from requests.adapters import HTTPAdapter
+          from urllib3.util.retry import Retry
+          from sensenova_transport import error_types
+
+          report = {'scope': 'One synthetic code image; no market data, Telegram or plan upload',
+                    'model': 'sensenova-6.8-flash-lite', 'attempts': 0,
+                    'automatic_retries': 0, 'image_count': 1,
+                    'requests_version': requests.__version__,
+                    'urllib3_version': urllib3.__version__,
+                    'code_commit': os.environ.get('GITHUB_SHA', '')}
+          expected = ''.join(secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(6))
+          fig = plt.figure(figsize=(6, 2), dpi=100, facecolor='white')
+          fig.text(0.5, 0.5, expected, ha='center', va='center',
+                   fontsize=48, fontfamily='DejaVu Sans Mono', color='black')
+          buffer = io.BytesIO()
+          fig.savefig(buffer, format='png', dpi=100)
+          plt.close(fig)
+          image = buffer.getvalue()
+          buffer.close()
+          report['image_bytes'] = len(image)
+          payload = {'model': report['model'], 'messages': [{'role': 'user', 'content': [
+              {'type': 'text', 'text': 'Read the six-character code visible in this image. Reply with only those six characters, no explanation.'},
+              {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,' + base64.b64encode(image).decode('ascii')}}
+          ]}], 'temperature': 0.2, 'reasoning_effort': 'low', 'max_tokens': 128, 'stream': False}
+          report['request_json_bytes'] = len(json.dumps(payload).encode('utf-8'))
+          key = os.environ.get('SENSENOVA_API_KEY', '').strip()
+          start = time.monotonic()
+          if not key:
+              report['result'] = 'MISSING_KEY_NO_REQUEST'
+          else:
+              retry = Retry(total=0, connect=0, read=0, status=0, other=0,
+                            redirect=0, allowed_methods=frozenset({'POST'}))
+              report['attempts'] = 1
+              try:
+                  with requests.Session() as session:
+                      session.mount('https://', HTTPAdapter(max_retries=retry))
+                      response = session.post('https://token.sensenova.ai/v1/chat/completions',
+                          headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
+                          json=payload, timeout=(10, 120), allow_redirects=False)
+                      report['http_status'] = response.status_code
+                      if response.status_code != 200:
+                          report['result'] = 'HTTP_ERROR'
+                      else:
+                          body = response.json()
+                          choices = body.get('choices') if isinstance(body, dict) else None
+                          choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+                          message = choice.get('message')
+                          content = message.get('content') if isinstance(message, dict) else None
+                          report['content_length'] = len(content) if isinstance(content, str) else None
+                          report['image_code_matches'] = isinstance(content, str) and content.strip() == expected
+                          report['finish_is_stop'] = choice.get('finish_reason') == 'stop'
+                          report['result'] = 'IMAGE_OK' if report['image_code_matches'] and report['finish_is_stop'] else 'RESPONSE_REQUIRES_REVIEW'
+                          usage = body.get('usage') if isinstance(body, dict) else None
+                          report['usage'] = {k: usage[k] for k in ('prompt_tokens', 'completion_tokens', 'total_tokens') if isinstance(usage, dict) and type(usage.get(k)) in (int, float)}
+              except Exception as exc:
+                  report.update(result='REQUEST_OR_RESPONSE_ERROR', exception_types=error_types(exc))
+          report['elapsed_seconds'] = round(time.monotonic() - start, 2)
+          text = json.dumps(report, indent=2)
+          pathlib.Path('image-report.json').write_text(text, encoding='utf-8')
+          print(text)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+              summary.write('## Single image diagnostic\nInspect result, not job color. The expected code appears only in the image, not the prompt. This is not a chart analysis or live-readiness test. No raw responses or secrets logged.\n```json\n' + text + '\n```\n')
+          PY
+      - name: Save report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensenova-image-${{ github.run_id }}
+          path: image-report.json
+          if-no-files-found: error
+          retention-days: 7
