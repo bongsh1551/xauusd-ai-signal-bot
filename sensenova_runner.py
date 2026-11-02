@@ -72,7 +72,8 @@ def post(url, **kwargs):
     response = requests.post(ENDPOINT,
         headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
         json={'model': MODEL, 'messages': [{'role': 'user', 'content': content}],
-              'temperature': 0.2, 'max_tokens': 4096, 'stream': False}, timeout=(10, 120))
+              'temperature': 0.2, 'reasoning_effort': 'low',
+              'max_tokens': 8192, 'stream': False}, timeout=(10, 120))
     result = pipeline.api_json(response, 'SenseNova', [key])
     choices = result.get('choices') if isinstance(result, dict) else None
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
@@ -81,11 +82,19 @@ def post(url, **kwargs):
     message = choice.get('message')
     if not isinstance(message, dict):
         raise RuntimeError('SenseNova: missing or invalid message')
-    value, reasoning, finish = message.get('content'), message.get('reasoning_content'), choice.get('finish_reason')
+    value = message.get('content')
+    reasoning = message.get('reasoning')
+    if reasoning is None:
+        reasoning = message.get('reasoning_content')
+    finish = choice.get('finish_reason')
     usage = result.get('usage')
-    numeric_usage = {k: usage[k] for k in ('prompt_tokens', 'completion_tokens', 'total_tokens')
+    numeric_usage = {k: usage[k] for k in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'reasoning_tokens')
                      if isinstance(usage, dict) and type(usage.get(k)) in (int, float)}
+    details = usage.get('completion_tokens_details') if isinstance(usage, dict) else None
+    if isinstance(details, dict) and type(details.get('reasoning_tokens')) in (int, float):
+        numeric_usage['completion_reasoning_tokens'] = details['reasoning_tokens']
     LAST_DIAGNOSTIC = {'provider': 'sensenova', 'model': MODEL,
+        'requested_reasoning_effort': 'low', 'requested_max_tokens': 8192,
         'finish_reason': finish if finish in ('stop', 'length', 'content_filter', 'tool_calls', 'function_call', None) else 'UNRECOGNIZED',
         'content_type': type(value).__name__,
         'content_length': len(value) if isinstance(value, (str, list)) else 0,
