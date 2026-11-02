@@ -22,17 +22,17 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Verify chart imports
-        run: python -c "import six; import mplfinance"
+        run: python -c "import six; import mplfinance; import sensenova_runner"
 
-      - name: Run signal bot
+      - name: Run signal bot with SenseNova
         id: signal_bot
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
           PLAN_UPDATE_TOKEN: ${{ secrets.PLAN_UPDATE_TOKEN }}
-        run: python main.py
+        run: python sensenova_runner.py
 
       - name: Upload analysis journal
         if: always()
