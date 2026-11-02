@@ -34,7 +34,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
           PLAN_UPDATE_TOKEN: ${{ secrets.PLAN_UPDATE_TOKEN }}
-        run: python sensenova_runner.py
+        run: python publication_guard.py
 
       - name: Upload analysis journal
         if: always()
