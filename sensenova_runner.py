@@ -127,11 +127,41 @@ def post(url, **kwargs):
                 'data:' + image['mime_type'] + ';base64,' + image['data']}})
         else:
             raise RuntimeError('SenseNova: unsupported input part')
-    response = requests.post(ENDPOINT,
-        headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
-        json={'model': MODEL, 'messages': [{'role': 'user', 'content': content}],
-              'temperature': 0.2, 'reasoning_effort': 'low',
-              'max_tokens': 8192, 'stream': False}, timeout=(10, 120))
+    gemini_key = os.environ.get('GEMINI_API_KEY', '').strip()
+    request_body = {'model': MODEL, 'messages': [{'role': 'user', 'content': content}],
+                    'temperature': 0.2, 'reasoning_effort': 'low',
+                    'max_tokens': 8192, 'stream': False}
+    try:
+        response = requests.post(ENDPOINT,
+            headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
+            json=request_body, timeout=(10, 120))
+    except RuntimeError as exc:
+        if 'SenseNova transport failure' not in str(exc) or not gemini_key:
+            raise
+        print(json.dumps({'event': 'provider_fallback', 'from': 'sensenova',
+                          'to': 'gemini', 'reason': 'transport_failure'}, sort_keys=True))
+        fallback_kwargs = dict(kwargs)
+        fallback_kwargs['headers'] = dict(kwargs.get('headers', {}))
+        fallback_kwargs['headers']['x-goog-api-key'] = gemini_key
+        response = requests.post(url, **fallback_kwargs)
+        result = pipeline.api_json(response, 'Gemini fallback', [gemini_key])
+        candidates = result.get('candidates', [])
+        if not candidates:
+            raise RuntimeError('Gemini fallback: no candidates')
+        candidate = candidates[0]
+        parts = candidate.get('content', {}).get('parts', [])
+        fallback_text = '\\n'.join(p.get('text', '') for p in parts
+                                    if isinstance(p, dict) and not p.get('thought')).strip()
+        if candidate.get('finishReason') != 'STOP' or not fallback_text:
+            raise RuntimeError('Gemini fallback: incomplete response')
+        status = validate_analysis(fallback_text)
+        LAST_DIAGNOSTIC = {'provider': 'gemini_fallback',
+                           'model': url.rsplit('/', 1)[-1].split(':', 1)[0],
+                           'fallback_reason': 'sensenova_transport_failure',
+                           'analysis_status': status}
+        print(json.dumps({'event': 'provider_fallback_validated',
+                          'provider': 'gemini', 'analysis_status': status}, sort_keys=True))
+        return Response(result)
     result = pipeline.api_json(response, 'SenseNova', [key])
     choices = result.get('choices') if isinstance(result, dict) else None
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
@@ -173,12 +203,15 @@ def post(url, **kwargs):
 def save_record(path, record):
     if record.get('stage') == 'gemini':
         record['stage'] = 'sensenova'
-    record['ai_provider'] = 'sensenova'
+    provider = LAST_DIAGNOSTIC.get('provider', 'sensenova') if LAST_DIAGNOSTIC else 'sensenova'
+    record['ai_provider'] = provider
     if LAST_DIAGNOSTIC:
-        record['sensenova_diagnostic'] = LAST_DIAGNOSTIC.copy()
-    for old, new in (('gemini_usage', 'sensenova_usage'), ('gemini_finish_reason', 'sensenova_finish_reason')):
-        if old in record:
-            record[new] = record.pop(old)
+        record['provider_diagnostic'] = LAST_DIAGNOSTIC.copy()
+        record['ai_model'] = LAST_DIAGNOSTIC.get('model', MODEL)
+    if record.get('ai_provider') == 'sensenova':
+        for old, new in (('gemini_usage', 'sensenova_usage'), ('gemini_finish_reason', 'sensenova_finish_reason')):
+            if old in record:
+                record[new] = record.pop(old)
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
     temporary.replace(path)
@@ -189,8 +222,7 @@ def main():
     if not key:
         print('Missing SENSENOVA_API_KEY; analysis not started')
         return 1
-    os.environ['GEMINI_API_KEY'] = key
-    pipeline.MODEL = MODEL
+    pipeline.MODEL = 'gemini-2.5-flash'
     pipeline.requests = SimpleNamespace(get=requests.get, post=post)
     pipeline.save_record = save_record
     return pipeline.main()
