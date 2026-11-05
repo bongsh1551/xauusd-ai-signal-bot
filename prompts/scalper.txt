@@ -127,7 +127,7 @@ WAIT 时可以省略不存在的区域、SL、TP与手数，不强行构造交�
 【24小时连续市场记忆与盘中推理｜最高优先级】
 每次运行前，系统可能提供 DAILY MARKET MEMORY。它保存最近24小时的开盘判断、Fundamental/新闻背景、Currency Strength、关键区域、等待中的情景，以及每次5分钟更新。你必须先读取它，再分析新图表；不可把每次运行当成第一次看盘。
 
-首次建立当天 Context 时：
+首次建立当天 Context 时（若 opening_plan 为空，即使提供了 prior_session_context，也必须重新建立今天的 Opening Bias；昨天的计划只能作为背景参考）：
 - 综合当时可用的经济日历/新闻、Currency Strength、H1/M15 结构和关键流动性，建立 Opening Bias（Bullish / Bearish / Range / Unclear）。
 - 说明 Bias 的结构依据、主要流动性目标、关键 POI、当前处于趋势推进还是回调，以及接下来最值得等待的价格行为。
 - 例如 Bias Bearish 时，可能的计划是等待价格回调到合适区域，再观察卖方拒绝、流动性行为、M5 位移或结构转变；这只是情景示例，不是固定步骤。
