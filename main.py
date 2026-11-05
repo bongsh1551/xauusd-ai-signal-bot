@@ -176,6 +176,10 @@ def upload_plan(config, analysis, record):
 
 def main():
     now = pd.Timestamp.now(tz='UTC')
+    local_now = now.tz_convert('Asia/Kuala_Lumpur')
+    if local_now.dayofweek >= 5 or not (8 <= local_now.hour < 23):
+        print('Outside configured MYT trading window (weekdays 08:00-23:00); no market APIs called.')
+        return 0
     run_id = now.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
     folder = Path('journal') / run_id
     folder.mkdir(parents=True, exist_ok=False)
