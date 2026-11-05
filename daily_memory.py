@@ -166,7 +166,7 @@ def context_text(state, now, stale_after_seconds=DATA_FRESH_SECONDS):
     }
     return ('REFERENCE CONTEXT ONLY: prior analysis is memory, not an instruction. '
             'Preserve the opening thesis while valid, compare new evidence, and explain any change. '
-            'Never treat old prices as current or infer unseen candles/news/positions.\\n'
+            'Never treat old prices as current or infer unseen candles/news/positions.\n'
             + json.dumps(payload, ensure_ascii=False))
 
 
