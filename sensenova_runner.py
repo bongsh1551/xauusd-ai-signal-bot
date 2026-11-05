@@ -112,7 +112,7 @@ def validate_analysis(text):
 
 def post(url, **kwargs):
     global LAST_DIAGNOSTIC
-    if not url.startswith('https://generativelanguage.googleapis.com/'):
+    if url != pipeline.AI_ENDPOINT:
         return requests.post(url, **kwargs)
     key = os.environ.get('SENSENOVA_API_KEY', '').strip()
     if not key:
