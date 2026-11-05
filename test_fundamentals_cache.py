@@ -13,7 +13,7 @@ def fx_value(symbol):
     return {
         'symbol': symbol,
         'last_close': 1.0,
-        'change_4h_pct': 0.1,
+        'change_4h_pct': -0.1 if symbol == 'EUR/USD' else 0.1,
         'last_closed_utc': '2026-11-05T00:00:00+00:00',
         'closed_h1_candles': 10,
         'minutes_since_close': 5,
