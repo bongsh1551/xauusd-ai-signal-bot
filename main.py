@@ -16,9 +16,12 @@ import pandas as pd
 import requests
 
 from fundamentals import collect_fundamentals
+import daily_memory
 
 MODEL = 'gemini-3.5-flash-lite'
 PROMPT_PATH = 'prompts/scalper.txt'
+MEMORY_PATH = '.cache/daily_market_memory.json'
+MEMORY_MODE = os.getenv('MARKET_MEMORY_MODE', 'historical_test')
 HEADER = '🧪 历史行情分析测试｜不是当前交易信号，不可据此进场'
 PLAN_UPLOAD_URL = 'https://goldscalp-telegram.bongsh2002.workers.dev/update-plan'
 
@@ -195,6 +198,9 @@ def main():
     save_record(record_path, record)
     names = ['TWELVEDATA_API_KEY', 'GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'PLAN_UPDATE_TOKEN']
     config = {name: os.getenv(name, '').strip() for name in names}
+    memory_state, memory_status = daily_memory.load_state(MEMORY_PATH, now.to_pydatetime(), MEMORY_MODE)
+    record['market_memory'] = {'status': memory_status, 'revision': memory_state['revision'],
+                               'date_myt': memory_state['date_myt'], 'ttl_hours': 24}
     try:
         missing = [name for name in names if not config[name]]
         if missing:
@@ -210,7 +216,10 @@ def main():
                        + HEADER + '\n当前 UTC：' + now.isoformat()
                        + '\n当前大马时间：' + now.tz_convert('Asia/Kuala_Lumpur').isoformat()
                        + '\n不编造宏观背景，不把新时间戳等同于有效行情。只基于以下输入。')
-        parts = [{'text': instruction}]
+        memory_context = daily_memory.context_text(memory_state, now.to_pydatetime())
+        if memory_state.get('latest_analysis') is None:
+            memory_context += '\\nNo prior analysis is available. Establish the opening market context from the current inputs.'
+        parts = [{'text': instruction}, {'text': '【DAILY MARKET MEMORY｜24小时连续上下文】\\n' + memory_context}]
         (folder / 'execution_instruction.txt').write_text(instruction, encoding='utf-8')
         m5_frame = None
         m5_diagnostic = None
@@ -261,6 +270,28 @@ def main():
         save_record(record_path, record)
         if not analysis or candidate.get('finishReason') != 'STOP':
             raise RuntimeError('Gemini output missing or incomplete; Telegram skipped')
+        # Persist the model's rolling market context after every successful analysis.
+        # The M5 close timestamp anchors the data; memory never makes old prices current.
+        m5_as_of = pd.Timestamp(m5_diagnostic['last_closed_candle_utc']).to_pydatetime()
+        opening_cycle = memory_state.get('opening_plan') is None
+        comparison = re.search(r'与上次相比\\s*[:：]\\s*([^\\n]+)', analysis)
+        change_reason = comparison.group(1).strip() if comparison else (
+            'OPENING CONTEXT ESTABLISHED' if opening_cycle else 'Model analysis update; inspect full analysis for evidence')
+        memory_fundamentals = {
+            'captured_at_utc': now.isoformat(),
+            'calendar_events': fundamentals['calendar_events'],
+            'calendar_coverage': fundamentals['calendar_coverage'],
+            'currency_strength': fundamentals['currency_strength'],
+            'errors': fundamentals['errors']
+        }
+        memory_state = daily_memory.record_analysis(
+            memory_state, now.to_pydatetime(), m5_as_of, run_id, analysis,
+            change_reason, opening=opening_cycle, fundamentals=memory_fundamentals)
+        daily_memory.save_state(MEMORY_PATH, memory_state)
+        record['market_memory'] = {'status': 'SAVED', 'revision': memory_state['revision'],
+                                   'date_myt': memory_state['date_myt'], 'ttl_hours': 24,
+                                   'opening_context_established': opening_cycle,
+                                   'comparison': change_reason}
         trade_plan = extract_json_block(analysis, 'trade_plan')
         market_watch = extract_json_block(analysis, 'market_watch')
         safety_reasons = []
