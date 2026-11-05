@@ -48,7 +48,7 @@ class AnalysisIngestPayloadTests(unittest.TestCase):
 
     def test_ambiguous_status_is_not_usable(self):
         payload = build_analysis_ingest_payload(
-            self.record, '状态：WAIT\\n状态：APPROACH',
+            self.record, '状态：WAIT\n状态：APPROACH',
             self.safety_gate,
             {'timestamp_stale': False, 'last_closed_candle_utc': '2026-11-05T06:55:00+00:00'})
         self.assertFalse(payload['meta']['analysis_usable'])
