@@ -102,7 +102,7 @@ def load_fx_cache(now):
         cache = json.loads(FX_CACHE_PATH.read_text(encoding='utf-8'))
         # Current format stores each pair independently so one failed symbol
         # does not force the other pair to be fetched again.
-        if isinstance(cache.get('symbols'), dict):
+        if 'updated_at_utc' in cache or 'retry_after_utc' in cache:
             symbols = {}
             for symbol, item in cache['symbols'].items():
                 if not isinstance(item, dict) or not isinstance(item.get('data'), dict):
