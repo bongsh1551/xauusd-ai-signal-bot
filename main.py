@@ -206,7 +206,7 @@ def upload_plan(config, analysis, record):
 
 def build_analysis_ingest_payload(record, analysis, safety_gate, m5_diagnostic):
     """Separate analysis usefulness from permission to publish a trade plan."""
-    statuses = re.findall(r'^\\s*状态\\s*[:：]\\s*(WAIT|APPROACH|CONFIRMED)\\b',
+    statuses = re.findall(r'^\s*状态\\s*[:：]\\s*(WAIT|APPROACH|CONFIRMED)\\b',
                           analysis.replace('**', ''), re.M)
     complete = len(statuses) == 1
     quality_reasons = []
