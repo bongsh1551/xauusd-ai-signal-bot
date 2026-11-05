@@ -201,6 +201,7 @@ def main():
     memory_state, memory_status = daily_memory.load_state(MEMORY_PATH, now.to_pydatetime(), MEMORY_MODE)
     record['market_memory'] = {'status': memory_status, 'revision': memory_state['revision'],
                                'date_myt': memory_state['date_myt'], 'ttl_hours': 24}
+    memory_saved = False
     try:
         missing = [name for name in names if not config[name]]
         if missing:
@@ -317,6 +318,7 @@ def main():
             memory_state, now.to_pydatetime(), m5_as_of, run_id, analysis,
             change_reason, opening=opening_cycle, fundamentals=memory_fundamentals)
         daily_memory.save_state(MEMORY_PATH, memory_state)
+        memory_saved = True
         record['market_memory'] = {'status': 'SAVED', 'revision': memory_state['revision'],
                                    'date_myt': memory_state['date_myt'], 'ttl_hours': 24,
                                    'opening_context_established': opening_cycle,
@@ -376,6 +378,15 @@ def main():
         print(f'历史测试完成；Journal: {folder}')
         return 0
     except Exception as exc:
+        if not memory_saved:
+            try:
+                memory_state = daily_memory.record_failure(memory_state, now.to_pydatetime(), run_id,
+                                                           type(exc).__name__)
+                daily_memory.save_state(MEMORY_PATH, memory_state)
+                record['market_memory'] = {'status': 'SAVED_FAILURE', 'revision': memory_state['revision'],
+                                           'date_myt': memory_state['date_myt'], 'ttl_hours': 24}
+            except Exception as memory_error:
+                record['market_memory_error'] = type(memory_error).__name__
         message = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
         for secret in config.values():
             if secret:
