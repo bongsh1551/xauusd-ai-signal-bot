@@ -152,6 +152,27 @@ def extract_json_block(analysis, label):
     return value if isinstance(value, dict) else None
 
 
+def apply_safety_gate_to_analysis(analysis, trade_plan, market_watch, reasons):
+    """Return a self-consistent WAIT analysis when publication safety checks fail."""
+    blocked = re.sub(r'状态：\s*(WAIT|APPROACH|CONFIRMED)([^\n]*)',
+                     '状态：WAIT（安全闸拦截）', analysis, count=1)
+    if isinstance(trade_plan, dict) and trade_plan.get('status') == 'ENTRY_READY':
+        trade_plan['status'] = 'WAIT'
+        trade_plan['blocked_reason'] = '; '.join(reasons)
+    if isinstance(market_watch, dict):
+        for zone in market_watch.get('zones', []) or []:
+            if isinstance(zone, dict) and zone.get('status') == 'APPROACH':
+                zone['status'] = 'WAIT'
+        watch_json = json.dumps(market_watch, ensure_ascii=False, indent=2)
+        tick = chr(96) * 3
+        blocked, _ = re.subn(tick + r'market_watch\s*\{.*?\}\s*' + tick,
+                             tick + 'market_watch\n' + watch_json + '\n' + tick,
+                             blocked, count=1, flags=re.DOTALL)
+    tick = chr(96) * 3
+    blocked = re.sub(r'\n?\s*' + tick + r'trade_plan\b.*?' + tick, '',
+                     blocked, count=1, flags=re.DOTALL)
+    return blocked
+
 def upload_plan(config, analysis, record):
     meta = {
         'run_id': record['run_id'],
@@ -292,14 +313,8 @@ def main():
         safety_gate = {'passed': not safety_reasons, 'reasons': safety_reasons}
         record['safety_gate'] = safety_gate
         if not safety_gate['passed']:
-            analysis = re.sub(r'状态：\s*(WAIT|APPROACH|CONFIRMED)([^\n]*)', '状态：WAIT（安全闸拦截）', analysis, count=1)
-            if trade_plan and trade_plan.get('status') == 'ENTRY_READY':
-                trade_plan['status'] = 'WAIT'
-                trade_plan['blocked_reason'] = '; '.join(safety_reasons)
-            if market_watch:
-                for zone in market_watch.get('zones', []) or []:
-                    if zone.get('status') == 'APPROACH':
-                        zone['status'] = 'WAIT'
+            analysis = apply_safety_gate_to_analysis(
+                analysis, trade_plan, market_watch, safety_reasons)
         # Persist the model's rolling market context after every successful analysis.
         # The M5 close timestamp anchors the data; memory never makes old prices current.
         m5_as_of = pd.Timestamp(m5_diagnostic['last_closed_candle_utc']).to_pydatetime()

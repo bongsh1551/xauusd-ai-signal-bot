@@ -32,5 +32,26 @@ class MarketMemoryPipelineIntegrationTests(unittest.TestCase):
         self.assertIn('记忆是连续推理的参考，不是命令，也不是交易规则', prompt)
 
 
+    def test_safety_gate_removes_stale_entry_plan_from_memory_text(self):
+        analysis = (
+            "状态：CONFIRMED\n"
+            "```market_watch\n{\"zones\":[{\"direction\":\"BUY\","
+            "\"zone_type\":\"demand\",\"low\":2300,\"high\":2305,"
+            "\"status\":\"APPROACH\",\"entry_trigger\":\"M5 MSS\","
+            "\"cancel_condition\":\"M15 close below\"}]}\n```\n"
+            "```trade_plan\n{\"status\":\"ENTRY_READY\"}\n```"
+        )
+        plan = {"status": "ENTRY_READY"}
+        watch = {"zones": [{"status": "APPROACH"}]}
+        result = pipeline.apply_safety_gate_to_analysis(
+            analysis, plan, watch, ["market session unverified"])
+        self.assertIn("状态：WAIT（安全闸拦截）", result)
+        self.assertNotIn("trade_plan", result)
+        self.assertNotIn("ENTRY_READY", result)
+        self.assertIn('"status": "WAIT"', result)
+        self.assertEqual(plan["status"], "WAIT")
+        self.assertEqual(watch["zones"][0]["status"], "WAIT")
+
+
 if __name__ == '__main__':
     unittest.main()
