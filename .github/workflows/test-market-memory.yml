@@ -21,7 +21,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install project dependencies
+        run: pip install -r requirements.txt
       - name: Compile Python sources
-        run: python -m compileall -q daily_memory.py main.py sensenova_runner.py
-      - name: Run 24-hour memory tests
-        run: python -m unittest -v test_daily_memory
+        run: python -m compileall -q daily_memory.py fundamentals.py main.py sensenova_runner.py sensenova_transport.py publication_guard.py
+      - name: Run complete offline regression suite
+        run: python -m unittest -v test_daily_memory test_market_data_quality test_fundamentals_cache test_sensenova_validation test_market_memory_pipeline
