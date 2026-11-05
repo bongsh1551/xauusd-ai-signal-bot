@@ -100,55 +100,95 @@ def fetch_fx(key, symbol, now, folder):
 def load_fx_cache(now):
     try:
         cache = json.loads(FX_CACHE_PATH.read_text(encoding='utf-8'))
+        # Current format stores each pair independently so one failed symbol
+        # does not force the other pair to be fetched again.
+        if isinstance(cache.get('symbols'), dict):
+            symbols = {}
+            for symbol, item in cache['symbols'].items():
+                if not isinstance(item, dict) or not isinstance(item.get('data'), dict):
+                    continue
+                cached_at = pd.Timestamp(item['cached_at_utc'])
+                age = (now - cached_at).total_seconds() / 60
+                if 0 <= age <= FX_CACHE_MAX_AGE_MINUTES:
+                    symbols[symbol] = item['data']
+            retry_after = cache.get('retry_after_utc')
+            retry_pending = False
+            if retry_after:
+                retry_pending = pd.Timestamp(retry_after) > now
+            return {'symbols': symbols, 'retry_pending': retry_pending}
+        # Read the previous all-or-nothing cache format during rollout.
         cached_at = pd.Timestamp(cache['cached_at_utc'])
         age = (now - cached_at).total_seconds() / 60
         data = cache['symbols']
-        if age < 0 or age > FX_CACHE_MAX_AGE_MINUTES:
-            return None
-        if not all(isinstance(data.get(symbol), dict) for symbol in ('EUR/USD', 'USD/JPY')):
-            return None
-        return data
+        if 0 <= age <= FX_CACHE_MAX_AGE_MINUTES and all(
+                isinstance(data.get(symbol), dict) for symbol in ('EUR/USD', 'USD/JPY')):
+            return {'symbols': data, 'retry_pending': False}
     except (OSError, ValueError, KeyError, TypeError):
-        return None
+        pass
+    return {'symbols': {}, 'retry_pending': False}
+
+
+def save_fx_cache(symbols, now, retry_after=None):
+    FX_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        'updated_at_utc': now.isoformat(),
+        'symbols': symbols,
+        'retry_after_utc': retry_after.isoformat() if retry_after is not None else None
+    }
+    temporary = FX_CACHE_PATH.with_suffix('.tmp')
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    temporary.replace(FX_CACHE_PATH)
+    FX_CACHE_UPDATED.write_text(now.isoformat(), encoding='utf-8')
 
 
 def collect_fundamentals(key, now, folder):
     calendar = fetch_calendar(now, folder)
     errors = {}
-    # The cache is restored between scheduled GitHub Actions runs. Refresh the
-    # two H1 FX pairs only when the cached closed-candle snapshot is over 70m old.
     FX_CACHE_UPDATED.unlink(missing_ok=True)
-    cached = load_fx_cache(now)
-    if cached is not None:
-        eurusd, usdjpy = cached['EUR/USD'], cached['USD/JPY']
-        fx_source = 'cache'
-    else:
-        eurusd = None
-        usdjpy = None
-        try:
-            eurusd = fetch_fx(key, 'EUR/USD', now, folder)
-        except Exception as exc:
-            errors['EURUSD'] = str(exc)[:300]
-        try:
-            usdjpy = fetch_fx(key, 'USD/JPY', now, folder)
-        except Exception as exc:
-            errors['USDJPY'] = str(exc)[:300]
-        fx_source = 'live_api'
-        if eurusd is not None and usdjpy is not None:
-            FX_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            temporary = FX_CACHE_PATH.with_suffix('.tmp')
-            temporary.write_text(json.dumps({
+    cache = load_fx_cache(now)
+    cached_symbols = cache['symbols']
+    values = {}
+    cache_symbols = {}
+    attempted_refresh = False
+    retry_after = None
+
+    for symbol in ('EUR/USD', 'USD/JPY'):
+        if symbol in cached_symbols:
+            values[symbol] = cached_symbols[symbol]
+            cache_symbols[symbol] = {
                 'cached_at_utc': now.isoformat(),
-                'symbols': {'EUR/USD': eurusd, 'USD/JPY': usdjpy}
-            }, ensure_ascii=False, indent=2), encoding='utf-8')
-            temporary.replace(FX_CACHE_PATH)
-            FX_CACHE_UPDATED.write_text(now.isoformat(), encoding='utf-8')
+                'data': cached_symbols[symbol]
+            }
+            continue
+
+        if cache['retry_pending']:
+            values[symbol] = None
+            errors[symbol.replace('/', '')] = 'refresh temporarily deferred after recent API failure'
+            # Preserve the original cached timestamp/data if it exists but is stale.
+            continue
+
+        attempted_refresh = True
+        try:
+            value = fetch_fx(key, symbol, now, folder)
+            values[symbol] = value
+            cache_symbols[symbol] = {'cached_at_utc': now.isoformat(), 'data': value}
+        except Exception as exc:
+            values[symbol] = None
+            errors[symbol.replace('/', '')] = str(exc)[:300]
+            retry_after = now + pd.Timedelta(minutes=15)
+
+    # Persist successful pairs and a short failure cooldown. This avoids
+    # repeatedly spending credits on a failing endpoint every 5-minute run.
+    if attempted_refresh:
+        save_fx_cache(cache_symbols, now, retry_after)
+
+    eurusd, usdjpy = values.get('EUR/USD'), values.get('USD/JPY')
     for symbol, value in (('EUR/USD', eurusd), ('USD/JPY', usdjpy)):
         if value is not None:
             (folder / f"{symbol.replace('/', '').lower()}_h1.json").write_text(
                 json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
     strength = currency_strength(eurusd, usdjpy)
-    strength['data_source'] = fx_source
+    strength['data_source'] = 'cache' if not attempted_refresh else 'live_api'
     context = build_context(now, calendar, strength, errors)
     (folder / 'market_context.txt').write_text(context, encoding='utf-8')
     return {
@@ -158,7 +198,6 @@ def collect_fundamentals(key, now, folder):
         'errors': errors,
         'context': context
     }
-
 
 def currency_strength(eurusd, usdjpy):
     if not eurusd or not usdjpy:
