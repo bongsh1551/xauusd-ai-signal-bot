@@ -154,7 +154,7 @@ def extract_json_block(analysis, label):
 
 def apply_safety_gate_to_analysis(analysis, trade_plan, market_watch, reasons):
     """Return a self-consistent WAIT analysis when publication safety checks fail."""
-    blocked = re.sub(r'状态：\\s*(WAIT|APPROACH|CONFIRMED)([^\\n]*)',
+    blocked = re.sub(r'状态：\s*(WAIT|APPROACH|CONFIRMED)([^\n]*)',
                      '状态：WAIT（安全闸拦截）', analysis, count=1)
     if isinstance(trade_plan, dict) and trade_plan.get('status') == 'ENTRY_READY':
         trade_plan['status'] = 'WAIT'
@@ -165,11 +165,11 @@ def apply_safety_gate_to_analysis(analysis, trade_plan, market_watch, reasons):
                 zone['status'] = 'WAIT'
         watch_json = json.dumps(market_watch, ensure_ascii=False, indent=2)
         tick = chr(96) * 3
-        blocked, _ = re.subn(tick + r'market_watch\\s*\\{.*?\\}\\s*' + tick,
-                             tick + 'market_watch\\n' + watch_json + '\\n' + tick,
+        blocked, _ = re.subn(tick + r'market_watch\s*\{.*?\}\s*' + tick,
+                             tick + 'market_watch\n' + watch_json + '\n' + tick,
                              blocked, count=1, flags=re.DOTALL)
     tick = chr(96) * 3
-    blocked = re.sub(r'\\n?\\s*' + tick + r'trade_plan\\b.*?' + tick, '',
+    blocked = re.sub(r'\n?\s*' + tick + r'trade_plan\b.*?' + tick, '',
                      blocked, count=1, flags=re.DOTALL)
     return blocked
 
