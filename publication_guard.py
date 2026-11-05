@@ -25,7 +25,10 @@ def verified_record(record):
             and all(isinstance(c, dict)
                     and c.get('market_session_verified') is True
                     and c.get('timestamp_stale') is False
-                    and c.get('run_is_myt_weekend') is False for c in charts))
+                    and c.get('run_is_myt_weekend') is False
+                    and c.get('quality_review_required') is False
+                    and c.get('quality_verdict') == 'NO_NARROW_RUN_FLAG'
+                    for c in charts))
 
 def guarded_upload(config, analysis, record):
     if not verified_record(record):
