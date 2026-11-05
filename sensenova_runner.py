@@ -41,7 +41,7 @@ def _require_text(value, field):
 def validate_analysis(text):
     """Validate the model's complete machine-readable publication contract."""
     plain = text.replace('**', '')
-    statuses = re.findall(r'^\s*状态\s*[:：]\s*(WAIT|APPROACH|CONFIRMED)\b', plain, re.M)
+    statuses = re.findall(r'^\s*(?:[-*]\s*)?(?:状态|Status|Market Status)\s*[:：]\s*(WAIT|APPROACH|CONFIRMED)\b', plain, re.I | re.M)
     if len(statuses) != 1:
         raise RuntimeError('SenseNova: missing or ambiguous analysis status; publication blocked')
     status = statuses[0]
