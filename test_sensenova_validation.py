@@ -28,6 +28,14 @@ class SenseNovaContractTests(unittest.TestCase):
     def test_wait_with_empty_zones_is_valid(self):
         self.assertEqual(validate_analysis(analysis()), "WAIT")
 
+    def test_accepts_english_status_label(self):
+        text = analysis().replace('状态：WAIT', 'Status: WAIT')
+        self.assertEqual(validate_analysis(text), 'WAIT')
+
+    def test_accepts_bulleted_status_label(self):
+        text = analysis().replace('状态：WAIT', '- 状态：WAIT')
+        self.assertEqual(validate_analysis(text), 'WAIT')
+
     def test_approach_with_valid_zone_is_valid(self):
         self.assertEqual(validate_analysis(analysis("APPROACH", [valid_zone()])), "APPROACH")
 
