@@ -226,7 +226,7 @@ def main():
         return 1
     if not os.environ.get('GEMINI_API_KEY', '').strip():
         os.environ['GEMINI_API_KEY'] = 'GEMINI_FALLBACK_DISABLED'
-    pipeline.MODEL = 'gemini-2.5-flash'
+    pipeline.MODEL = 'gemini-3.8-flash'
     pipeline.requests = SimpleNamespace(get=requests.get, post=post)
     pipeline.save_record = save_record
     return pipeline.main()
