@@ -221,7 +221,9 @@ def main():
               'plan_upload': {'attempted': False, 'sent': False},
               'execution': 'manual_only_no_auto_trading'}
     save_record(record_path, record)
-    names = ['TWELVEDATA_API_KEY', 'GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'PLAN_UPDATE_TOKEN']
+    names = ['TWELVEDATA_API_KEY', 'GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
+    if ANALYSIS_MODE != 'shadow':
+        names.append('PLAN_UPDATE_TOKEN')
     config = {name: os.getenv(name, '').strip() for name in names}
     memory_state, memory_status = daily_memory.load_state(MEMORY_PATH, now.to_pydatetime(), MEMORY_MODE)
     record['market_memory'] = {'status': memory_status, 'revision': memory_state['revision'],
