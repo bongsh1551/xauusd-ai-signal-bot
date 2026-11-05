@@ -40,6 +40,7 @@ def new_day(now, mode):
         'revision': 0,
         'opening_plan': None,
         'opening_fundamentals': None,
+        'prior_session_context': None,
         'latest_analysis': None,
         'latest_fundamentals': None,
         'last_attempt': None,
@@ -57,25 +58,26 @@ def rollover(state, now, mode):
     now_utc = utc_time(now)
     expected_date = now_utc.astimezone(MYT).date().isoformat()
     if state.get('date_myt') == expected_date:
-        latest_same_day = state.get('latest_analysis')
-        age_same_day = _age_seconds(latest_same_day, now_utc) if latest_same_day else None
-        if age_same_day is None or 0 <= age_same_day <= MEMORY_TTL_SECONDS:
+        anchor = state.get('opening_plan') or state.get('latest_analysis')
+        anchor_age = _age_seconds(anchor, now_utc) if anchor else None
+        if anchor_age is None or 0 <= anchor_age <= MEMORY_TTL_SECONDS:
             return deepcopy(state)
         return new_day(now_utc, mode)
     fresh = new_day(now_utc, mode)
     latest = state.get('latest_analysis')
     age = _age_seconds(latest, now_utc) if latest else None
     if age is not None and 0 <= age <= MEMORY_TTL_SECONDS:
-        fresh['opening_plan'] = deepcopy(state.get('opening_plan') or latest)
-        fresh['opening_fundamentals'] = deepcopy(
-            state.get('opening_fundamentals') or state.get('latest_fundamentals'))
+        # Keep yesterday as reference, but require a fresh opening analysis today.
+        fresh['prior_session_context'] = {
+            'opening_plan': deepcopy(state.get('opening_plan')),
+            'opening_fundamentals': deepcopy(state.get('opening_fundamentals')),
+            'latest_analysis': deepcopy(latest),
+            'latest_fundamentals': deepcopy(state.get('latest_fundamentals')),
+            'changes': [deepcopy(x) for x in state.get('changes', [])
+                        if 0 <= _age_seconds(x, now_utc) <= MEMORY_TTL_SECONDS][-10:]
+        }
         fresh['latest_analysis'] = deepcopy(latest)
         fresh['latest_fundamentals'] = deepcopy(state.get('latest_fundamentals'))
-        fresh['changes'] = [deepcopy(x) for x in state.get('changes', [])
-                            if 0 <= _age_seconds(x, now_utc) <= MEMORY_TTL_SECONDS][-100:]
-        fresh['recent_chat'] = [deepcopy(x) for x in state.get('recent_chat', [])
-                                if 0 <= (now_utc - datetime.fromisoformat(x['at_utc'])).total_seconds()
-                                <= MEMORY_TTL_SECONDS][-20:]
         fresh['revision'] = int(state.get('revision', 0))
     return fresh
 
@@ -154,6 +156,7 @@ def context_text(state, now, stale_after_seconds=DATA_FRESH_SECONDS):
         'revision': state['revision'], 'memory_ttl_hours': 24,
         'opening_plan': state['opening_plan'],
         'opening_fundamentals': state.get('opening_fundamentals'),
+        'prior_session_context': state.get('prior_session_context'),
         'latest_analysis': latest, 'latest_fundamentals': state.get('latest_fundamentals'),
         'last_attempt': state['last_attempt'],
         'memory_age_seconds': latest_age,
