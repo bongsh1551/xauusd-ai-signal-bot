@@ -164,7 +164,15 @@ def post(url, **kwargs):
     text = normalize_content(value).strip()
     if not text:
         raise RuntimeError('SenseNova: final content empty; publication blocked')
-    LAST_DIAGNOSTIC['analysis_status'] = validate_analysis(text)
+    try:
+        LAST_DIAGNOSTIC['analysis_status'] = validate_analysis(text)
+    except RuntimeError as exc:
+        LAST_DIAGNOSTIC['validation_error'] = str(exc)
+        LAST_DIAGNOSTIC['validation_preview'] = text[:1200]
+        print('SenseNova validation diagnostic: ' + json.dumps(
+            {k: LAST_DIAGNOSTIC[k] for k in ('validation_error', 'validation_preview')},
+            ensure_ascii=False))
+        raise
     print('SenseNova contract validated: ' + LAST_DIAGNOSTIC['analysis_status'])
     return Response({'candidates': [{'finishReason': 'STOP', 'content': {'parts': [{'text': text}]}}],
                      'usageMetadata': {'provider': 'sensenova', 'model': MODEL, 'usage': numeric_usage}})
