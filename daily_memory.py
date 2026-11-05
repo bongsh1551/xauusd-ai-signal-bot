@@ -57,7 +57,11 @@ def rollover(state, now, mode):
     now_utc = utc_time(now)
     expected_date = now_utc.astimezone(MYT).date().isoformat()
     if state.get('date_myt') == expected_date:
-        return deepcopy(state)
+        latest_same_day = state.get('latest_analysis')
+        age_same_day = _age_seconds(latest_same_day, now_utc) if latest_same_day else None
+        if age_same_day is None or 0 <= age_same_day <= MEMORY_TTL_SECONDS:
+            return deepcopy(state)
+        return new_day(now_utc, mode)
     fresh = new_day(now_utc, mode)
     latest = state.get('latest_analysis')
     age = _age_seconds(latest, now_utc) if latest else None
