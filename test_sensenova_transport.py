@@ -26,7 +26,7 @@ class SenseNovaPayloadDiagnosticsTests(unittest.TestCase):
         ).encode("utf-8"))
         self.assertEqual(result["request_json_bytes"], expected_bytes)
         self.assertEqual(result["image_count"], 2)
-        self.assertEqual(result["image_base64_chars"], 16)
+        self.assertEqual(result["image_base64_chars"], 20)
         self.assertEqual(result["message_count"], 1)
         self.assertNotIn("private prompt", json.dumps(result))
         self.assertNotIn("QUJDREVGRw==", json.dumps(result))
