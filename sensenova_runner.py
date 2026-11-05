@@ -128,6 +128,8 @@ def post(url, **kwargs):
         else:
             raise RuntimeError('SenseNova: unsupported input part')
     gemini_key = os.environ.get('GEMINI_API_KEY', '').strip()
+    if gemini_key == 'GEMINI_FALLBACK_DISABLED':
+        gemini_key = ''
     request_body = {'model': MODEL, 'messages': [{'role': 'user', 'content': content}],
                     'temperature': 0.2, 'reasoning_effort': 'low',
                     'max_tokens': 8192, 'stream': False}
@@ -222,6 +224,8 @@ def main():
     if not key:
         print('Missing SENSENOVA_API_KEY; analysis not started')
         return 1
+    if not os.environ.get('GEMINI_API_KEY', '').strip():
+        os.environ['GEMINI_API_KEY'] = 'GEMINI_FALLBACK_DISABLED'
     pipeline.MODEL = 'gemini-2.5-flash'
     pipeline.requests = SimpleNamespace(get=requests.get, post=post)
     pipeline.save_record = save_record
