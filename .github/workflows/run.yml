@@ -38,7 +38,7 @@ jobs:
             daily-market-memory-
 
       - name: Test daily memory
-        run: python -m unittest -v test_daily_memory
+        run: python -m unittest -v test_daily_memory test_analysis_ingest
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -55,6 +55,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PLAN_UPDATE_TOKEN: ${{ secrets.PLAN_UPDATE_TOKEN }}
         run: python publication_guard.py
 

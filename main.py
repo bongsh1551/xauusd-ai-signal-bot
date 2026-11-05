@@ -28,6 +28,7 @@ MEMORY_MODE = os.getenv('MARKET_MEMORY_MODE', ANALYSIS_MODE)
 HEADER = ('🧪 影子模式分析｜非交易信号，不可据此进场' if ANALYSIS_MODE == 'shadow'
           else '🧪 历史行情分析测试｜不是当前交易信号，不可据此进场')
 PLAN_UPLOAD_URL = 'https://goldscalp-telegram.bongsh2002.workers.dev/update-plan'
+ANALYSIS_INGEST_URL = 'https://goldscalp-telegram.bongsh2002.workers.dev/ingest-analysis'
 
 
 
@@ -202,6 +203,59 @@ def upload_plan(config, analysis, record):
     return result
 
 
+
+def build_analysis_ingest_payload(record, analysis, safety_gate, m5_diagnostic):
+    """Separate analysis usefulness from permission to publish a trade plan."""
+    statuses = re.findall(r'^\s*状态\s*[:：]\s*(WAIT|APPROACH|CONFIRMED)\b',
+                          analysis.replace('**', ''), re.M)
+    complete = len(statuses) == 1
+    quality_reasons = []
+    charts = record.get('charts', [])
+    if not complete:
+        quality_reasons.append('ANALYSIS_STATUS_MISSING_OR_AMBIGUOUS')
+    if not isinstance(m5_diagnostic, dict) or m5_diagnostic.get('timestamp_stale'):
+        quality_reasons.append('M5_DATA_STALE_OR_MISSING')
+    if any(item.get('quality_review_required') for item in charts if isinstance(item, dict)):
+        quality_reasons.append('CHART_QUALITY_REVIEW_REQUIRED')
+    usable = not quality_reasons
+    data_as_of = (m5_diagnostic or {}).get('last_closed_candle_utc')
+    meta = {
+        'run_id': record['run_id'],
+        'created_at_utc': record['created_at_utc'],
+        'created_at_myt': record['created_at_myt'],
+        'data_as_of_utc': data_as_of,
+        'mode': record.get('mode', ANALYSIS_MODE),
+        'ai_model': MODEL,
+        'code_commit': record.get('code_commit', ''),
+        'charts': charts,
+        'fundamentals': record.get('fundamentals', {}),
+        'trade_plan': record.get('trade_plan'),
+        'market_watch': record.get('market_watch'),
+        'current_price': record.get('current_price'),
+        'analysis_status': statuses[0] if complete else 'INVALID',
+        'analysis_complete': complete,
+        'analysis_usable': usable,
+        'quality_status': 'USABLE_CONTEXT' if usable else 'REVIEW_REQUIRED',
+        'quality_reasons': quality_reasons,
+        'safety_gate': safety_gate,
+        'publish_allowed': bool(safety_gate.get('passed')) and record.get('mode') == 'live',
+        'source': 'github_workflow'
+    }
+    return {'plan': analysis, 'meta': meta}
+
+
+def upload_analysis_context(config, record, analysis, safety_gate, m5_diagnostic):
+    payload = build_analysis_ingest_payload(record, analysis, safety_gate, m5_diagnostic)
+    response = requests.post(
+        ANALYSIS_INGEST_URL,
+        headers={'Authorization': 'Bearer ' + config['PLAN_UPDATE_TOKEN'],
+                 'Content-Type': 'application/json'},
+        json=payload, timeout=(10, 30))
+    result = api_json(response, 'Cloudflare analysis ingest', [config['PLAN_UPDATE_TOKEN']])
+    if result.get('ok') is not True:
+        raise RuntimeError('Cloudflare analysis ingest rejected')
+    return result
+
 def main():
     now = pd.Timestamp.now(tz='UTC')
     local_now = now.tz_convert('Asia/Kuala_Lumpur')
@@ -221,9 +275,7 @@ def main():
               'plan_upload': {'attempted': False, 'sent': False},
               'execution': 'manual_only_no_auto_trading'}
     save_record(record_path, record)
-    names = ['TWELVEDATA_API_KEY', 'GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
-    if ANALYSIS_MODE != 'shadow':
-        names.append('PLAN_UPDATE_TOKEN')
+    names = ['TWELVEDATA_API_KEY', 'GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'PLAN_UPDATE_TOKEN']
     config = {name: os.getenv(name, '').strip() for name in names}
     memory_state, memory_status = daily_memory.load_state(MEMORY_PATH, now.to_pydatetime(), MEMORY_MODE)
     record['market_memory'] = {'status': memory_status, 'revision': memory_state['revision'],
@@ -355,6 +407,26 @@ def main():
         (folder / 'market_watch.json').write_text(
             json.dumps(market_watch, ensure_ascii=False, indent=2), encoding='utf-8')
         save_record(record_path, record)
+        record['analysis_ingest'] = {'attempted': True, 'sent': False}
+        save_record(record_path, record)
+        try:
+            ingest_result = upload_analysis_context(
+                config, record, analysis, safety_gate, m5_diagnostic)
+            record['analysis_ingest'] = {
+                'attempted': True, 'sent': True,
+                'received_at': ingest_result.get('received_at'),
+                'duplicate': bool(ingest_result.get('duplicate', False)),
+                'quality_status': ingest_result.get('quality_status')
+            }
+        except Exception as ingest_error:
+            ingest_message = (str(ingest_error) if isinstance(ingest_error, RuntimeError)
+                              else type(ingest_error).__name__)
+            for secret in config.values():
+                if secret:
+                    ingest_message = ingest_message.replace(secret, '[REDACTED]')
+            record['analysis_ingest'] = {
+                'attempted': True, 'sent': False, 'error': ingest_message[:500]}
+            raise RuntimeError('Cloudflare analysis ingest failed: ' + ingest_message)
         if not safety_gate['passed']:
             if ANALYSIS_MODE == 'shadow':
                 # Keep the model's chart interpretation visible for evaluation,
