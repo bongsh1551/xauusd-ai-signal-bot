@@ -122,7 +122,8 @@ def load_fx_cache(now):
         data = cache['symbols']
         if 0 <= age <= FX_CACHE_MAX_AGE_MINUTES and all(
                 isinstance(data.get(symbol), dict) for symbol in ('EUR/USD', 'USD/JPY')):
-            return {'symbols': {symbol: {'cached_at_utc': cached_at.isoformat(), 'data': value}\n                            for symbol, value in data.items()}, 'retry_pending': False}
+            return {'symbols': {symbol: {'cached_at_utc': cached_at.isoformat(), 'data': value}
+                            for symbol, value in data.items()}, 'retry_pending': False}
     except (OSError, ValueError, KeyError, TypeError):
         pass
     return {'symbols': {}, 'retry_pending': False}
