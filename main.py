@@ -223,6 +223,8 @@ def main():
               'execution': 'manual_only_no_auto_trading'}
     save_record(record_path, record)
     names = ['TWELVEDATA_API_KEY', 'SENSENOVA_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
+    if os.getenv('GEMINI_API_KEY', '').strip():
+        names.append('GEMINI_API_KEY')
     if ANALYSIS_MODE != 'shadow':
         names.append('PLAN_UPDATE_TOKEN')
     config = {name: os.getenv(name, '').strip() for name in names}
