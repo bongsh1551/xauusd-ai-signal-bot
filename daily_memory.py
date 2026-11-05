@@ -146,6 +146,8 @@ def context_text(state, now, stale_after_seconds=DATA_FRESH_SECONDS):
         raise ValueError('Freshness threshold must be positive')
     latest = state['latest_analysis']
     latest_age = _age_seconds(latest, now) if latest else None
+    data_age = ((utc_time(now) - utc_time(datetime.fromisoformat(latest['data_as_of_utc']))).total_seconds()
+                if latest else None)
     opening_age = _age_seconds(state.get('opening_plan'), now) if state.get('opening_plan') else None
     payload = {
         'date_myt': state['date_myt'], 'mode': state['mode'],
@@ -157,8 +159,8 @@ def context_text(state, now, stale_after_seconds=DATA_FRESH_SECONDS):
         'memory_age_seconds': latest_age,
         'memory_is_within_24h': latest_age is not None and 0 <= latest_age <= MEMORY_TTL_SECONDS,
         'opening_plan_age_seconds': opening_age,
-        'data_age_seconds': latest_age,
-        'data_is_stale': latest_age is None or latest_age < 0 or latest_age > stale_after_seconds,
+        'data_age_seconds': data_age,
+        'data_is_stale': data_age is None or data_age < 0 or data_age > stale_after_seconds,
         'news_state': state['news_state'], 'position_state': state['position_state'],
         'recent_changes': state['changes'][-10:], 'recent_chat': state['recent_chat']
     }
