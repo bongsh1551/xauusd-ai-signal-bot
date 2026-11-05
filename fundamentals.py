@@ -110,7 +110,7 @@ def load_fx_cache(now):
                 cached_at = pd.Timestamp(item['cached_at_utc'])
                 age = (now - cached_at).total_seconds() / 60
                 if 0 <= age <= FX_CACHE_MAX_AGE_MINUTES:
-                    symbols[symbol] = item['data']
+                    symbols[symbol] = {'cached_at_utc': item['cached_at_utc'], 'data': item['data']}
             retry_after = cache.get('retry_after_utc')
             retry_pending = False
             if retry_after:
@@ -122,7 +122,7 @@ def load_fx_cache(now):
         data = cache['symbols']
         if 0 <= age <= FX_CACHE_MAX_AGE_MINUTES and all(
                 isinstance(data.get(symbol), dict) for symbol in ('EUR/USD', 'USD/JPY')):
-            return {'symbols': data, 'retry_pending': False}
+            return {'symbols': {symbol: {'cached_at_utc': cached_at.isoformat(), 'data': value}\n                            for symbol, value in data.items()}, 'retry_pending': False}
     except (OSError, ValueError, KeyError, TypeError):
         pass
     return {'symbols': {}, 'retry_pending': False}
