@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import time
 from types import SimpleNamespace
 import requests
 import main as pipeline
@@ -110,6 +111,27 @@ def validate_analysis(text):
             raise RuntimeError('SenseNova: invalid trade_plan valid_minutes')
     return status
 
+def gemini_post_with_retry(url, kwargs, max_attempts=4):
+    """Retry only transient Gemini overload/rate-limit/server responses."""
+    retryable = {429, 500, 502, 503, 504}
+    for attempt in range(max_attempts):
+        response = requests.post(url, **kwargs)
+        if response.status_code not in retryable or attempt == max_attempts - 1:
+            return response
+        retry_after = None
+        headers = getattr(response, 'headers', {}) or {}
+        try:
+            retry_after = float(headers.get('Retry-After', ''))
+        except (TypeError, ValueError):
+            pass
+        delay = min(15.0, max(1.0, retry_after if retry_after is not None else 2 ** attempt))
+        print(json.dumps({'event': 'gemini_retry', 'http_status': response.status_code,
+                          'attempt': attempt + 1, 'max_attempts': max_attempts,
+                          'delay_seconds': delay}, sort_keys=True))
+        time.sleep(delay)
+    raise RuntimeError('Gemini fallback: retry loop exhausted')
+
+
 def post(url, **kwargs):
     global LAST_DIAGNOSTIC
     if not url.startswith('https://generativelanguage.googleapis.com/'):
@@ -145,7 +167,7 @@ def post(url, **kwargs):
         fallback_kwargs = dict(kwargs)
         fallback_kwargs['headers'] = dict(kwargs.get('headers', {}))
         fallback_kwargs['headers']['x-goog-api-key'] = gemini_key
-        response = requests.post(url, **fallback_kwargs)
+        response = gemini_post_with_retry(url, fallback_kwargs)
         result = pipeline.api_json(response, 'Gemini fallback', [gemini_key])
         candidates = result.get('candidates', [])
         if not candidates:
