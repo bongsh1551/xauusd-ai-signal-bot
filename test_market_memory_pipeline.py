@@ -34,12 +34,12 @@ class MarketMemoryPipelineIntegrationTests(unittest.TestCase):
 
     def test_safety_gate_removes_stale_entry_plan_from_memory_text(self):
         analysis = (
-            "状态：CONFIRMED\\n"
-            "```market_watch\\n{\"zones\":[{\"direction\":\"BUY\","
+            "状态：CONFIRMED\n"
+            "```market_watch\n{\"zones\":[{\"direction\":\"BUY\","
             "\"zone_type\":\"demand\",\"low\":2300,\"high\":2305,"
             "\"status\":\"APPROACH\",\"entry_trigger\":\"M5 MSS\","
-            "\"cancel_condition\":\"M15 close below\"}]}\\n```\\n"
-            "```trade_plan\\n{\"status\":\"ENTRY_READY\"}\\n```"
+            "\"cancel_condition\":\"M15 close below\"}]}\n```\n"
+            "```trade_plan\n{\"status\":\"ENTRY_READY\"}\n```"
         )
         plan = {"status": "ENTRY_READY"}
         watch = {"zones": [{"status": "APPROACH"}]}
