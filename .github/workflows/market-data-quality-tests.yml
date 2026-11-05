@@ -21,6 +21,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Compile Python files
-        run: python -m py_compile main.py sensenova_runner.py
+        run: python -m py_compile main.py fundamentals.py sensenova_runner.py
       - name: Run market data quality tests
-        run: python -m unittest -v test_market_data_quality
+        run: python -m unittest -v test_market_data_quality test_sensenova_validation test_fundamentals_cache

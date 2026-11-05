@@ -22,6 +22,14 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Restore hourly FX cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/fx_strength.json
+          key: fx-strength-${{ github.run_id }}
+          restore-keys: |
+            fx-strength-
+
       - name: Test daily memory
         run: python -m unittest -v test_daily_memory
 
@@ -40,6 +48,13 @@ jobs:
           SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
           PLAN_UPDATE_TOKEN: ${{ secrets.PLAN_UPDATE_TOKEN }}
         run: python publication_guard.py
+
+      - name: Save refreshed hourly FX cache
+        if: always() && hashFiles('.cache/fx_strength.updated') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/fx_strength.json
+          key: fx-strength-${{ github.run_id }}
 
       - name: Upload analysis journal
         if: always()

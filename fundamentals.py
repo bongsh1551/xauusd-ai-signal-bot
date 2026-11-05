@@ -1,9 +1,13 @@
 import json
+from pathlib import Path
 
 import pandas as pd
 import requests
 
 CALENDAR_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
+FX_CACHE_PATH = Path('.cache/fx_strength.json')
+FX_CACHE_UPDATED = Path('.cache/fx_strength.updated')
+FX_CACHE_MAX_AGE_MINUTES = 70
 
 
 def _json(response, service):
@@ -93,6 +97,106 @@ def fetch_fx(key, symbol, now, folder):
     return result
 
 
+def load_fx_cache(now):
+    try:
+        cache = json.loads(FX_CACHE_PATH.read_text(encoding='utf-8'))
+        # Current format stores each pair independently so one failed symbol
+        # does not force the other pair to be fetched again.
+        if 'updated_at_utc' in cache or 'retry_after_utc' in cache:
+            symbols = {}
+            for symbol, item in cache['symbols'].items():
+                if not isinstance(item, dict) or not isinstance(item.get('data'), dict):
+                    continue
+                cached_at = pd.Timestamp(item['cached_at_utc'])
+                age = (now - cached_at).total_seconds() / 60
+                if 0 <= age <= FX_CACHE_MAX_AGE_MINUTES:
+                    symbols[symbol] = {'cached_at_utc': item['cached_at_utc'], 'data': item['data']}
+            retry_after = cache.get('retry_after_utc')
+            retry_pending = False
+            if retry_after:
+                retry_pending = pd.Timestamp(retry_after) > now
+            return {'symbols': symbols, 'retry_pending': retry_pending}
+        # Read the previous all-or-nothing cache format during rollout.
+        cached_at = pd.Timestamp(cache['cached_at_utc'])
+        age = (now - cached_at).total_seconds() / 60
+        data = cache['symbols']
+        if 0 <= age <= FX_CACHE_MAX_AGE_MINUTES and all(
+                isinstance(data.get(symbol), dict) for symbol in ('EUR/USD', 'USD/JPY')):
+            return {'symbols': {symbol: {'cached_at_utc': cached_at.isoformat(), 'data': value}
+                            for symbol, value in data.items()}, 'retry_pending': False}
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return {'symbols': {}, 'retry_pending': False}
+
+
+def save_fx_cache(symbols, now, retry_after=None):
+    FX_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        'updated_at_utc': now.isoformat(),
+        'symbols': symbols,
+        'retry_after_utc': retry_after.isoformat() if retry_after is not None else None
+    }
+    temporary = FX_CACHE_PATH.with_suffix('.tmp')
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    temporary.replace(FX_CACHE_PATH)
+    FX_CACHE_UPDATED.write_text(now.isoformat(), encoding='utf-8')
+
+
+def collect_fundamentals(key, now, folder):
+    calendar = fetch_calendar(now, folder)
+    errors = {}
+    FX_CACHE_UPDATED.unlink(missing_ok=True)
+    cache = load_fx_cache(now)
+    cached_symbols = cache['symbols']
+    values = {}
+    cache_symbols = {}
+    attempted_refresh = False
+    retry_after = None
+
+    for symbol in ('EUR/USD', 'USD/JPY'):
+        if symbol in cached_symbols:
+            values[symbol] = cached_symbols[symbol]['data']
+            cache_symbols[symbol] = cached_symbols[symbol]
+            continue
+
+        if cache['retry_pending']:
+            values[symbol] = None
+            errors[symbol.replace('/', '')] = 'refresh temporarily deferred after recent API failure'
+            # Preserve the original cached timestamp/data if it exists but is stale.
+            continue
+
+        attempted_refresh = True
+        try:
+            value = fetch_fx(key, symbol, now, folder)
+            values[symbol] = value
+            cache_symbols[symbol] = {'cached_at_utc': now.isoformat(), 'data': value}
+        except Exception as exc:
+            values[symbol] = None
+            errors[symbol.replace('/', '')] = str(exc)[:300]
+            retry_after = now + pd.Timedelta(minutes=15)
+
+    # Persist successful pairs and a short failure cooldown. This avoids
+    # repeatedly spending credits on a failing endpoint every 5-minute run.
+    if attempted_refresh:
+        save_fx_cache(cache_symbols, now, retry_after)
+
+    eurusd, usdjpy = values.get('EUR/USD'), values.get('USD/JPY')
+    for symbol, value in (('EUR/USD', eurusd), ('USD/JPY', usdjpy)):
+        if value is not None:
+            (folder / f"{symbol.replace('/', '').lower()}_h1.json").write_text(
+                json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+    strength = currency_strength(eurusd, usdjpy)
+    strength['data_source'] = 'cache' if not attempted_refresh else 'live_api'
+    context = build_context(now, calendar, strength, errors)
+    (folder / 'market_context.txt').write_text(context, encoding='utf-8')
+    return {
+        'calendar_events': calendar['events'],
+        'calendar_coverage': calendar.get('coverage', 'unavailable'),
+        'currency_strength': strength,
+        'errors': errors,
+        'context': context
+    }
+
 def currency_strength(eurusd, usdjpy):
     if not eurusd or not usdjpy:
         return {'status': 'UNAVAILABLE', 'usd_vs_eur_pct': None,
@@ -162,28 +266,3 @@ def build_context(now, calendar, strength, errors):
         lines.append('')
     lines.append('请在分析开头分别给出：Fundamental status、calendar coverage、USD strength status，以及它们是否与 XAUUSD 结构共振；再进行 ICT/SMC 分析。')
     return '\n'.join(lines)
-
-
-def collect_fundamentals(key, now, folder):
-    calendar = fetch_calendar(now, folder)
-    errors = {}
-    eurusd = None
-    usdjpy = None
-    try:
-        eurusd = fetch_fx(key, 'EUR/USD', now, folder)
-    except Exception as exc:
-        errors['EURUSD'] = str(exc)[:300]
-    try:
-        usdjpy = fetch_fx(key, 'USD/JPY', now, folder)
-    except Exception as exc:
-        errors['USDJPY'] = str(exc)[:300]
-    strength = currency_strength(eurusd, usdjpy)
-    context = build_context(now, calendar, strength, errors)
-    (folder / 'market_context.txt').write_text(context, encoding='utf-8')
-    return {
-        'calendar_events': calendar['events'],
-        'calendar_coverage': calendar.get('coverage', 'unavailable'),
-        'currency_strength': strength,
-        'errors': errors,
-        'context': context
-    }
