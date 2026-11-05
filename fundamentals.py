@@ -155,11 +155,8 @@ def collect_fundamentals(key, now, folder):
 
     for symbol in ('EUR/USD', 'USD/JPY'):
         if symbol in cached_symbols:
-            values[symbol] = cached_symbols[symbol]
-            cache_symbols[symbol] = {
-                'cached_at_utc': now.isoformat(),
-                'data': cached_symbols[symbol]
-            }
+            values[symbol] = cached_symbols[symbol]['data']
+            cache_symbols[symbol] = cached_symbols[symbol]
             continue
 
         if cache['retry_pending']:
