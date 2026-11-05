@@ -1,34 +1,28 @@
 import unittest
+import json
 
 from sensenova_runner import validate_analysis
 
+NL = chr(10)
 
 def analysis(status="WAIT", zones=None, plan=None):
-    import json
     zones = [] if zones is None else zones
-    text = "状态：" + status + "\\n"
-    text += "```market_watch\\n" + json.dumps({"zones": zones}, ensure_ascii=False) + "\\n```"
+    text = "状态：" + status + NL
+    text += "```market_watch" + NL + json.dumps({"zones": zones}, ensure_ascii=False) + NL + "```"
     if plan is not None:
-        text += "\\n```trade_plan\\n" + json.dumps(plan, ensure_ascii=False) + "\\n```"
+        text += NL + "```trade_plan" + NL + json.dumps(plan, ensure_ascii=False) + NL + "```"
     return text
 
-
 def valid_zone():
-    return {
-        "direction": "BUY", "zone_type": "demand", "low": 2300.0, "high": 2305.0,
-        "status": "WAIT", "entry_trigger": "M5 rejection and MSS",
-        "cancel_condition": "M15 closes below zone"
-    }
-
+    return {"direction": "BUY", "zone_type": "demand", "low": 2300.0, "high": 2305.0,
+            "status": "WAIT", "entry_trigger": "M5 rejection and MSS",
+            "cancel_condition": "M15 closes below zone"}
 
 def valid_plan():
-    return {
-        "status": "ENTRY_READY", "direction": "BUY", "zone": "2300-2305",
-        "entry_trigger": "M5 displacement and MSS", "stop_loss": 2295.0,
-        "take_profits": [2310.0], "confidence": "中",
-        "reason": "Bullish structure continuation", "valid_minutes": 15
-    }
-
+    return {"status": "ENTRY_READY", "direction": "BUY", "zone": "2300-2305",
+            "entry_trigger": "M5 displacement and MSS", "stop_loss": 2295.0,
+            "take_profits": [2310.0], "confidence": "中",
+            "reason": "Bullish structure continuation", "valid_minutes": 15}
 
 class SenseNovaContractTests(unittest.TestCase):
     def test_wait_with_empty_zones_is_valid(self):
@@ -75,7 +69,6 @@ class SenseNovaContractTests(unittest.TestCase):
         plan["stop_loss"] = "2295"
         with self.assertRaises(RuntimeError):
             validate_analysis(analysis("CONFIRMED", [], plan))
-
 
 if __name__ == "__main__":
     unittest.main()
