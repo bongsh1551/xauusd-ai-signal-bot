@@ -91,7 +91,7 @@ class DailyMemoryTests(unittest.TestCase):
     def test_context_distinguishes_memory_from_fresh_data(self):
         first = self.opening()
         later = self.now + timedelta(minutes=11)
-        payload = json.loads(memory.context_text(first, later).split('\\n', 1)[1])
+        payload = json.loads(memory.context_text(first, later).split('\n', 1)[1])
         self.assertTrue(payload['memory_is_within_24h'])
         self.assertTrue(payload['data_is_stale'])
         self.assertEqual(payload['opening_fundamentals'], self.fundamentals)
