@@ -35,11 +35,22 @@ def guarded_upload(config, analysis, record):
         raise RuntimeError('Publication guard: test/unverified analysis retained in journal; Cloudflare upload blocked')
     return _original_upload(config, analysis, record)
 
+def shadow_telegram_allowed(record):
+    """Shadow mode may publish WAIT-only observations, never actionable plans."""
+    gate = record.get('safety_gate')
+    plan = record.get('trade_plan')
+    return (record.get('mode') == 'shadow'
+            and isinstance(gate, dict) and gate.get('passed') is False
+            and bool(gate.get('reasons'))
+            and not (isinstance(plan, dict) and plan.get('status') == 'ENTRY_READY'))
+
 def guarded_save(path, record):
     global _block_pending, _block_saved
     if (record.get('stage') == 'telegram'
             and record.get('status') == 'running'
             and not verified_record(record)):
+        if shadow_telegram_allowed(record):
+            return _original_save(path, record)
         record['telegram'] = {'attempted': False, 'sent': False}
         record['plan_upload'] = {'attempted': False, 'sent': False}
         record['publication_decision'] = 'BLOCKED_UNVERIFIED'
