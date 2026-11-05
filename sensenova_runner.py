@@ -41,14 +41,14 @@ def _require_text(value, field):
 def validate_analysis(text):
     """Validate the model's complete machine-readable publication contract."""
     plain = text.replace('**', '')
-    statuses = re.findall(r'^\\s*状态\\s*[:：]\\s*(WAIT|APPROACH|CONFIRMED)\\b', plain, re.M)
+    statuses = re.findall(r'^\s*状态\s*[:：]\s*(WAIT|APPROACH|CONFIRMED)\b', plain, re.M)
     if len(statuses) != 1:
         raise RuntimeError('SenseNova: missing or ambiguous analysis status; publication blocked')
     status = statuses[0]
 
     blocks = {}
     for label in ('trade_plan', 'market_watch'):
-        markers = re.findall(r'```\\s*' + label + r'\\b', text)
+        markers = re.findall(r'```\s*' + label + r'\b', text)
         if len(markers) > 1:
             raise RuntimeError('SenseNova: duplicate ' + label + ' blocks')
         block = pipeline.extract_json_block(text, label)
