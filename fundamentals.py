@@ -1,9 +1,13 @@
 import json
+from pathlib import Path
 
 import pandas as pd
 import requests
 
 CALENDAR_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
+FX_CACHE_PATH = Path('.cache/fx_strength.json')
+FX_CACHE_UPDATED = Path('.cache/fx_strength.updated')
+FX_CACHE_MAX_AGE_MINUTES = 70
 
 
 def _json(response, service):
@@ -93,6 +97,69 @@ def fetch_fx(key, symbol, now, folder):
     return result
 
 
+def load_fx_cache(now):
+    try:
+        cache = json.loads(FX_CACHE_PATH.read_text(encoding='utf-8'))
+        cached_at = pd.Timestamp(cache['cached_at_utc'])
+        age = (now - cached_at).total_seconds() / 60
+        data = cache['symbols']
+        if age < 0 or age > FX_CACHE_MAX_AGE_MINUTES:
+            return None
+        if not all(isinstance(data.get(symbol), dict) for symbol in ('EUR/USD', 'USD/JPY')):
+            return None
+        return data
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def collect_fundamentals(key, now, folder):
+    calendar = fetch_calendar(now, folder)
+    errors = {}
+    # The cache is restored between scheduled GitHub Actions runs. Refresh the
+    # two H1 FX pairs only when the cached closed-candle snapshot is over 70m old.
+    FX_CACHE_UPDATED.unlink(missing_ok=True)
+    cached = load_fx_cache(now)
+    if cached is not None:
+        eurusd, usdjpy = cached['EUR/USD'], cached['USD/JPY']
+        fx_source = 'cache'
+    else:
+        eurusd = None
+        usdjpy = None
+        try:
+            eurusd = fetch_fx(key, 'EUR/USD', now, folder)
+        except Exception as exc:
+            errors['EURUSD'] = str(exc)[:300]
+        try:
+            usdjpy = fetch_fx(key, 'USD/JPY', now, folder)
+        except Exception as exc:
+            errors['USDJPY'] = str(exc)[:300]
+        fx_source = 'live_api'
+        if eurusd is not None and usdjpy is not None:
+            FX_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            temporary = FX_CACHE_PATH.with_suffix('.tmp')
+            temporary.write_text(json.dumps({
+                'cached_at_utc': now.isoformat(),
+                'symbols': {'EUR/USD': eurusd, 'USD/JPY': usdjpy}
+            }, ensure_ascii=False, indent=2), encoding='utf-8')
+            temporary.replace(FX_CACHE_PATH)
+            FX_CACHE_UPDATED.write_text(now.isoformat(), encoding='utf-8')
+    for symbol, value in (('EUR/USD', eurusd), ('USD/JPY', usdjpy)):
+        if value is not None:
+            (folder / f"{symbol.replace('/', '').lower()}_h1.json").write_text(
+                json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+    strength = currency_strength(eurusd, usdjpy)
+    strength['data_source'] = fx_source
+    context = build_context(now, calendar, strength, errors)
+    (folder / 'market_context.txt').write_text(context, encoding='utf-8')
+    return {
+        'calendar_events': calendar['events'],
+        'calendar_coverage': calendar.get('coverage', 'unavailable'),
+        'currency_strength': strength,
+        'errors': errors,
+        'context': context
+    }
+
+
 def currency_strength(eurusd, usdjpy):
     if not eurusd or not usdjpy:
         return {'status': 'UNAVAILABLE', 'usd_vs_eur_pct': None,
@@ -162,28 +229,3 @@ def build_context(now, calendar, strength, errors):
         lines.append('')
     lines.append('请在分析开头分别给出：Fundamental status、calendar coverage、USD strength status，以及它们是否与 XAUUSD 结构共振；再进行 ICT/SMC 分析。')
     return '\n'.join(lines)
-
-
-def collect_fundamentals(key, now, folder):
-    calendar = fetch_calendar(now, folder)
-    errors = {}
-    eurusd = None
-    usdjpy = None
-    try:
-        eurusd = fetch_fx(key, 'EUR/USD', now, folder)
-    except Exception as exc:
-        errors['EURUSD'] = str(exc)[:300]
-    try:
-        usdjpy = fetch_fx(key, 'USD/JPY', now, folder)
-    except Exception as exc:
-        errors['USDJPY'] = str(exc)[:300]
-    strength = currency_strength(eurusd, usdjpy)
-    context = build_context(now, calendar, strength, errors)
-    (folder / 'market_context.txt').write_text(context, encoding='utf-8')
-    return {
-        'calendar_events': calendar['events'],
-        'calendar_coverage': calendar.get('coverage', 'unavailable'),
-        'currency_strength': strength,
-        'errors': errors,
-        'context': context
-    }
