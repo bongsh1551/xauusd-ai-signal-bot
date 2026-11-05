@@ -18,7 +18,8 @@ import requests
 from fundamentals import collect_fundamentals
 import daily_memory
 
-MODEL = 'gemini-3.5-flash-lite'
+MODEL = 'sensenova-6.8-flash-lite'
+AI_ENDPOINT = 'https://sensenova.internal/v1/chat/completions'
 PROMPT_PATH = 'prompts/scalper.txt'
 MEMORY_PATH = '.cache/daily_market_memory.json'
 ANALYSIS_MODE = os.getenv('ANALYSIS_MODE', 'historical_test').strip().lower()
@@ -221,7 +222,9 @@ def main():
               'plan_upload': {'attempted': False, 'sent': False},
               'execution': 'manual_only_no_auto_trading'}
     save_record(record_path, record)
-    names = ['TWELVEDATA_API_KEY', 'GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
+    names = ['TWELVEDATA_API_KEY', 'SENSENOVA_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
+    if os.getenv('GEMINI_API_KEY', '').strip():
+        names.append('GEMINI_API_KEY')
     if ANALYSIS_MODE != 'shadow':
         names.append('PLAN_UPDATE_TOKEN')
     config = {name: os.getenv(name, '').strip() for name in names}
@@ -279,26 +282,26 @@ def main():
         }
         parts.append({'text': fundamentals['context']})
         save_record(record_path, record)
-        record['stage'] = 'gemini'
+        record['stage'] = 'sensenova'
         save_record(record_path, record)
         response = requests.post(
-            f'https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent',
-            headers={'x-goog-api-key': config['GEMINI_API_KEY']},
+            AI_ENDPOINT,
+            headers={'Authorization': 'Bearer ' + config['SENSENOVA_API_KEY']},
             json={'contents': [{'role': 'user', 'parts': parts}],
-                  'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 2048}}, timeout=(10, 120))
-        result = api_json(response, 'Gemini', list(config.values()))
+                  'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 8192}}, timeout=(10, 120))
+        result = api_json(response, 'SenseNova', list(config.values()))
         candidates = result.get('candidates', [])
         if not candidates:
-            raise RuntimeError('Gemini: no candidates')
+            raise RuntimeError('SenseNova: no candidates')
         candidate = candidates[0]
-        record['gemini_finish_reason'] = candidate.get('finishReason')
+        record['sensenova_finish_reason'] = candidate.get('finishReason')
         analysis = '\n'.join(p.get('text', '') for p in candidate.get('content', {}).get('parts', [])
                              if not p.get('thought')).strip()
         record['ai_raw_output'] = analysis
-        record['gemini_usage'] = result.get('usageMetadata', {})
+        record['sensenova_usage'] = result.get('usageMetadata', {})
         save_record(record_path, record)
         if not analysis or candidate.get('finishReason') != 'STOP':
-            raise RuntimeError('Gemini output missing or incomplete; Telegram skipped')
+            raise RuntimeError('SenseNova output missing or incomplete; Telegram skipped')
         trade_plan = extract_json_block(analysis, 'trade_plan')
         market_watch = extract_json_block(analysis, 'market_watch')
         safety_reasons = ['shadow mode: live entry publication and plan upload are disabled'] if ANALYSIS_MODE == 'shadow' else []

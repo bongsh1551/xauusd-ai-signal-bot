@@ -112,7 +112,7 @@ def validate_analysis(text):
 
 def post(url, **kwargs):
     global LAST_DIAGNOSTIC
-    if not url.startswith('https://generativelanguage.googleapis.com/'):
+    if url != pipeline.AI_ENDPOINT:
         return requests.post(url, **kwargs)
     key = os.environ.get('SENSENOVA_API_KEY', '').strip()
     if not key:
@@ -127,13 +127,56 @@ def post(url, **kwargs):
                 'data:' + image['mime_type'] + ';base64,' + image['data']}})
         else:
             raise RuntimeError('SenseNova: unsupported input part')
-    response = requests.post(ENDPOINT,
-        headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
-        json={'model': MODEL, 'messages': [{'role': 'user', 'content': content}],
-              'temperature': 0.2, 'reasoning_effort': 'low',
-              'max_tokens': 8192, 'stream': False}, timeout=(10, 120))
-    result = pipeline.api_json(response, 'SenseNova', [key])
-    choices = result.get('choices') if isinstance(result, dict) else None
+    try:
+        response = requests.post(ENDPOINT,
+            headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
+            json={'model': MODEL, 'messages': [{'role': 'user', 'content': content}],
+                  'temperature': 0.2, 'reasoning_effort': 'low',
+                  'max_tokens': 8192, 'stream': False}, timeout=(10, 120))
+    except Exception as exc:
+        response = None
+        error_text = str(exc)
+        if isinstance(exc, requests.RequestException):
+            primary_failure = 'SenseNova connection error: ' + type(exc).__name__
+        elif isinstance(exc, RuntimeError) and error_text.startswith('SenseNova transport failure:'):
+            primary_failure = error_text
+        else:
+            raise
+    else:
+        primary_failure = ('SenseNova HTTP ' + str(response.status_code)) if (
+            response.status_code == 429 or response.status_code >= 500) else ''
+        if not primary_failure:
+            result = pipeline.api_json(response, 'SenseNova', [key])
+    if primary_failure:
+        fallback_key = os.environ.get('GEMINI_API_KEY', '').strip()
+        if not fallback_key:
+            raise RuntimeError(primary_failure + '; Gemini fallback key not configured')
+        print('Primary provider unavailable; using Gemini fallback. Reason: ' + primary_failure)
+        fallback_model = 'gemini-3.5-flash-lite'
+        fallback_response = requests.post(
+            'https://generativelanguage.googleapis.com/v1beta/models/' + fallback_model + ':generateContent',
+            headers={'x-goog-api-key': fallback_key},
+            json=kwargs['json'], timeout=(10, 120))
+        fallback_result = pipeline.api_json(fallback_response, 'Gemini fallback', [fallback_key])
+        candidates = fallback_result.get('candidates', [])
+        if not candidates or not isinstance(candidates[0], dict):
+            raise RuntimeError('Gemini fallback: no candidates')
+        candidate = candidates[0]
+        fallback_text = '\\n'.join(
+            part.get('text', '') for part in candidate.get('content', {}).get('parts', [])
+            if isinstance(part, dict) and not part.get('thought')
+        ).strip()
+        if not fallback_text or candidate.get('finishReason') != 'STOP':
+            raise RuntimeError('Gemini fallback output missing or incomplete')
+        LAST_DIAGNOSTIC = {'provider': 'gemini_fallback', 'primary_provider': 'sensenova',
+                           'primary_failure': primary_failure, 'model': fallback_model,
+                           'content_length': len(fallback_text)}
+        LAST_DIAGNOSTIC['analysis_status'] = validate_analysis(fallback_text)
+        print('Fallback contract validated: ' + LAST_DIAGNOSTIC['analysis_status'])
+        return Response({'candidates': [{'finishReason': 'STOP',
+                         'content': {'parts': [{'text': fallback_text}]}}],
+                         'usageMetadata': fallback_result.get('usageMetadata', {})})
+        choices = result.get('choices') if isinstance(result, dict) else None
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         raise RuntimeError('SenseNova: missing or invalid choices')
     choice = choices[0]
@@ -151,7 +194,7 @@ def post(url, **kwargs):
     details = usage.get('completion_tokens_details') if isinstance(usage, dict) else None
     if isinstance(details, dict) and type(details.get('reasoning_tokens')) in (int, float):
         numeric_usage['completion_reasoning_tokens'] = details['reasoning_tokens']
-    LAST_DIAGNOSTIC = {'provider': 'sensenova', 'model': MODEL,
+    LAST_DIAGNOSTIC = {'provider': 'sensenova', 'fallback_used': False, 'model': MODEL,
         'requested_reasoning_effort': 'low', 'requested_max_tokens': 8192,
         'finish_reason': finish if finish in ('stop', 'length', 'content_filter', 'tool_calls', 'function_call', None) else 'UNRECOGNIZED',
         'content_type': type(value).__name__,
