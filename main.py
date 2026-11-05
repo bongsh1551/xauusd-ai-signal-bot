@@ -23,6 +23,23 @@ HEADER = '🧪 历史行情分析测试｜不是当前交易信号，不可据�
 PLAN_UPLOAD_URL = 'https://goldscalp-telegram.bongsh2002.workers.dev/update-plan'
 
 
+
+def candle_range_quality(frame, threshold):
+    """Summarize near-flat candle runs without guessing their cause."""
+    sample_ranges = (frame.High - frame.Low).astype(float)
+    narrow = sample_ranges <= threshold
+    longest_run = run = 0
+    for is_narrow in narrow.tolist():
+        run = run + 1 if is_narrow else 0
+        longest_run = max(longest_run, run)
+    count = int(narrow.sum())
+    ratio = count / len(sample_ranges) if len(sample_ranges) else 0.0
+    return {'count': count, 'ratio': round(ratio, 4), 'longest_run': longest_run}
+
+
+def requires_candle_quality_review(*stats):
+    return any(item['ratio'] >= 0.25 and item['longest_run'] >= 6 for item in stats)
+
 def save_record(path, record):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -79,22 +96,9 @@ def fetch_chart(key, interval, minutes, now, folder):
     # Flag suspicious runs of near-flat candles in both the AI sample and chart window.
     # Thresholds are diagnostic only; they do not infer why the candles are flat.
     narrow_threshold = {'5min': 0.15, '15min': 0.30, '1h': 0.30}.get(interval, 0.30)
-    def range_stats(sample):
-        sample_ranges = (sample.High - sample.Low).astype(float)
-        narrow = sample_ranges <= narrow_threshold
-        longest_run = run = 0
-        for is_narrow in narrow.tolist():
-            run = run + 1 if is_narrow else 0
-            longest_run = max(longest_run, run)
-        count = int(narrow.sum())
-        ratio = count / len(sample_ranges) if len(sample_ranges) else 0.0
-        return {'count': count, 'ratio': round(ratio, 4), 'longest_run': longest_run}
-    ai_quality = range_stats(frame.tail(40))
-    chart_quality = range_stats(frame.tail(120))
-    quality_review_required = any(
-        item['ratio'] >= 0.25 and item['longest_run'] >= 6
-        for item in (ai_quality, chart_quality)
-    )
+    ai_quality = candle_range_quality(frame.tail(40), narrow_threshold)
+    chart_quality = candle_range_quality(frame.tail(120), narrow_threshold)
+    quality_review_required = requires_candle_quality_review(ai_quality, chart_quality)
     age = (now - (frame.index[-1] + pd.Timedelta(minutes=minutes))).total_seconds() / 60
     diagnostic = {
         'interval': interval, 'candles_available': len(frame), 'candles_sent': 40,
