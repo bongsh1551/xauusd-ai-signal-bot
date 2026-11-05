@@ -6,6 +6,12 @@ on:
       - 'daily_memory.py'
       - 'test_daily_memory.py'
       - 'main.py'
+      - 'sensenova_runner.py'
+      - 'fundamentals.py'
+      - 'test_market_memory_pipeline.py'
+      - 'test_market_data_quality.py'
+      - 'test_fundamentals_cache.py'
+      - 'test_sensenova_validation.py'
       - 'prompts/scalper.txt'
       - '.github/workflows/test-market-memory.yml'
   workflow_dispatch:
