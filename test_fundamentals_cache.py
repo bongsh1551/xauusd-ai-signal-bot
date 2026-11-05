@@ -56,8 +56,10 @@ class FxCacheTests(unittest.TestCase):
         self.assertEqual(result['currency_strength']['data_source'], 'cache')
 
     def test_failed_pair_has_15_minute_retry_cooldown_and_success_is_reused(self):
+        fail_eurusd_once = {'pending': True}
         def fetch(key, symbol, now, folder):
-            if symbol == 'EUR/USD':
+            if symbol == 'EUR/USD' and fail_eurusd_once['pending']:
+                fail_eurusd_once['pending'] = False
                 raise RuntimeError('temporary provider failure')
             return fx_value(symbol)
 
