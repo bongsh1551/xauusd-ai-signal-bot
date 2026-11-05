@@ -26,7 +26,7 @@ def install(runner):
         return
     original_post = requests.post
     session = requests.Session()
-    retry = Retry(total=2, connect=2, read=0, status=0, other=0,
+    retry = Retry(total=4, connect=4, read=0, status=0, other=0,
                   redirect=0, backoff_factor=0.5,
                   allowed_methods=frozenset({'POST'}))
     session.mount('https://', HTTPAdapter(max_retries=retry))
@@ -42,7 +42,7 @@ def install(runner):
         except requests.exceptions.RequestException as exc:
             names = error_types(exc)
             diagnostic = {'event': 'sensenova_transport_error',
-                          'exception_types': names, 'connect_retries_max': 2,
+                          'exception_types': names, 'connect_retries_max': 4,
                           'read_retries': 0, 'http_status_retries': 0}
             print(json.dumps(diagnostic, sort_keys=True))
             raise RuntimeError('SenseNova transport failure: ' + ','.join(names)) from None
