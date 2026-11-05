@@ -270,28 +270,6 @@ def main():
         save_record(record_path, record)
         if not analysis or candidate.get('finishReason') != 'STOP':
             raise RuntimeError('Gemini output missing or incomplete; Telegram skipped')
-        # Persist the model's rolling market context after every successful analysis.
-        # The M5 close timestamp anchors the data; memory never makes old prices current.
-        m5_as_of = pd.Timestamp(m5_diagnostic['last_closed_candle_utc']).to_pydatetime()
-        opening_cycle = memory_state.get('opening_plan') is None
-        comparison = re.search(r'与上次相比\s*[:：]\s*([^\n]+)', analysis)
-        change_reason = comparison.group(1).strip() if comparison else (
-            'OPENING CONTEXT ESTABLISHED' if opening_cycle else 'Model analysis update; inspect full analysis for evidence')
-        memory_fundamentals = {
-            'captured_at_utc': now.isoformat(),
-            'calendar_events': fundamentals['calendar_events'],
-            'calendar_coverage': fundamentals['calendar_coverage'],
-            'currency_strength': fundamentals['currency_strength'],
-            'errors': fundamentals['errors']
-        }
-        memory_state = daily_memory.record_analysis(
-            memory_state, now.to_pydatetime(), m5_as_of, run_id, analysis,
-            change_reason, opening=opening_cycle, fundamentals=memory_fundamentals)
-        daily_memory.save_state(MEMORY_PATH, memory_state)
-        record['market_memory'] = {'status': 'SAVED', 'revision': memory_state['revision'],
-                                   'date_myt': memory_state['date_myt'], 'ttl_hours': 24,
-                                   'opening_context_established': opening_cycle,
-                                   'comparison': change_reason}
         trade_plan = extract_json_block(analysis, 'trade_plan')
         market_watch = extract_json_block(analysis, 'market_watch')
         safety_reasons = []
@@ -321,6 +299,28 @@ def main():
                 for zone in market_watch.get('zones', []) or []:
                     if zone.get('status') == 'APPROACH':
                         zone['status'] = 'WAIT'
+        # Persist the model's rolling market context after every successful analysis.
+        # The M5 close timestamp anchors the data; memory never makes old prices current.
+        m5_as_of = pd.Timestamp(m5_diagnostic['last_closed_candle_utc']).to_pydatetime()
+        opening_cycle = memory_state.get('opening_plan') is None
+        comparison = re.search(r'与上次相比\s*[:：]\s*([^\n]+)', analysis)
+        change_reason = comparison.group(1).strip() if comparison else (
+            'OPENING CONTEXT ESTABLISHED' if opening_cycle else 'Model analysis update; inspect full analysis for evidence')
+        memory_fundamentals = {
+            'captured_at_utc': now.isoformat(),
+            'calendar_events': fundamentals['calendar_events'],
+            'calendar_coverage': fundamentals['calendar_coverage'],
+            'currency_strength': fundamentals['currency_strength'],
+            'errors': fundamentals['errors']
+        }
+        memory_state = daily_memory.record_analysis(
+            memory_state, now.to_pydatetime(), m5_as_of, run_id, analysis,
+            change_reason, opening=opening_cycle, fundamentals=memory_fundamentals)
+        daily_memory.save_state(MEMORY_PATH, memory_state)
+        record['market_memory'] = {'status': 'SAVED', 'revision': memory_state['revision'],
+                                   'date_myt': memory_state['date_myt'], 'ttl_hours': 24,
+                                   'opening_context_established': opening_cycle,
+                                   'comparison': change_reason}
         record['trade_plan'] = trade_plan
         record['market_watch'] = market_watch
         current_price = float(m5_frame.Close.iloc[-1]) if m5_frame is not None else None
