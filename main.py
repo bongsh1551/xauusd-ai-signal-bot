@@ -218,8 +218,8 @@ def main():
                        + '\n不编造宏观背景，不把新时间戳等同于有效行情。只基于以下输入。')
         memory_context = daily_memory.context_text(memory_state, now.to_pydatetime())
         if memory_state.get('latest_analysis') is None:
-            memory_context += '\\nNo prior analysis is available. Establish the opening market context from the current inputs.'
-        parts = [{'text': instruction}, {'text': '【DAILY MARKET MEMORY｜24小时连续上下文】\\n' + memory_context}]
+            memory_context += '\nNo prior analysis is available. Establish the opening market context from the current inputs.'
+        parts = [{'text': instruction}, {'text': '【DAILY MARKET MEMORY｜24小时连续上下文】\n' + memory_context}]
         (folder / 'execution_instruction.txt').write_text(instruction, encoding='utf-8')
         m5_frame = None
         m5_diagnostic = None
@@ -274,7 +274,7 @@ def main():
         # The M5 close timestamp anchors the data; memory never makes old prices current.
         m5_as_of = pd.Timestamp(m5_diagnostic['last_closed_candle_utc']).to_pydatetime()
         opening_cycle = memory_state.get('opening_plan') is None
-        comparison = re.search(r'与上次相比\\s*[:：]\\s*([^\\n]+)', analysis)
+        comparison = re.search(r'与上次相比\s*[:：]\s*([^\n]+)', analysis)
         change_reason = comparison.group(1).strip() if comparison else (
             'OPENING CONTEXT ESTABLISHED' if opening_cycle else 'Model analysis update; inspect full analysis for evidence')
         memory_fundamentals = {
