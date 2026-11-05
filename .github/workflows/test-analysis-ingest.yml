@@ -1,0 +1,26 @@
+name: Analysis ingest contract tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'main.py'
+      - 'test_analysis_ingest.py'
+      - 'requirements.txt'
+      - '.github/workflows/test-analysis-ingest.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run offline ingest tests
+        run: python -m unittest -v test_analysis_ingest
