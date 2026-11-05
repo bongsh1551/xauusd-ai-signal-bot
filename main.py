@@ -427,6 +427,18 @@ def main():
             record['analysis_ingest'] = {
                 'attempted': True, 'sent': False, 'error': ingest_message[:500]}
             raise RuntimeError('Cloudflare analysis ingest failed: ' + ingest_message)
+        if ANALYSIS_MODE == 'shadow':
+            # Shadow analysis is delivered to Cloudflare only. Telegram is reserved
+            # for Cloudflare setup alerts, health alerts, and user-initiated replies.
+            record['telegram'] = {'attempted': False, 'sent': False,
+                                  'reason': 'SHADOW_ANALYSIS_SENT_TO_CLOUDFLARE_ONLY'}
+            record['plan_upload'] = {'attempted': False, 'sent': False,
+                                     'reason': 'SHADOW_MODE_NO_PLAN_UPLOAD'}
+            record['status'] = 'completed'
+            record['stage'] = 'completed'
+            save_record(record_path, record)
+            print(f'Shadow analysis delivered to Cloudflare; no routine Telegram message; no plan upload or trade execution; Journal: {folder}')
+            return 0
         if not safety_gate['passed']:
             if ANALYSIS_MODE == 'shadow':
                 # Keep the model's chart interpretation visible for evaluation,
