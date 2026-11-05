@@ -26,8 +26,9 @@ class DailyMemoryTests(unittest.TestCase):
         next_day = datetime(2026, 10, 31, 17, 0, tzinfo=timezone.utc)
         rolled = memory.rollover(first, next_day, 'historical_test')
         self.assertEqual(rolled['date_myt'], '2026-11-01')
-        self.assertEqual(rolled['opening_plan']['run_id'], 'run-1')
-        self.assertEqual(rolled['opening_fundamentals'], self.fundamentals)
+        self.assertIsNone(rolled['opening_plan'])  # A new MYT date needs a fresh opening bias.
+        self.assertEqual(rolled['prior_session_context']['opening_plan']['run_id'], 'run-1')
+        self.assertEqual(rolled['prior_session_context']['opening_fundamentals'], self.fundamentals)
 
     def test_expired_context_is_cleared(self):
         first = self.opening()
