@@ -23,6 +23,23 @@ HEADER = '🧪 历史行情分析测试｜不是当前交易信号，不可据�
 PLAN_UPLOAD_URL = 'https://goldscalp-telegram.bongsh2002.workers.dev/update-plan'
 
 
+
+def candle_range_quality(frame, threshold):
+    """Summarize near-flat candle runs without guessing their cause."""
+    sample_ranges = (frame.High - frame.Low).astype(float)
+    narrow = sample_ranges <= threshold
+    longest_run = run = 0
+    for is_narrow in narrow.tolist():
+        run = run + 1 if is_narrow else 0
+        longest_run = max(longest_run, run)
+    count = int(narrow.sum())
+    ratio = count / len(sample_ranges) if len(sample_ranges) else 0.0
+    return {'count': count, 'ratio': round(ratio, 4), 'longest_run': longest_run}
+
+
+def requires_candle_quality_review(*stats):
+    return any(item['ratio'] >= 0.25 and item['longest_run'] >= 6 for item in stats)
+
 def save_record(path, record):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -76,6 +93,12 @@ def fetch_chart(key, interval, minutes, now, folder):
     frame.to_csv(folder / f'{interval}_closed_ohlc.csv', index_label='timestamp_utc')
     frame.tail(40).to_csv(folder / f'{interval}_ai_ohlc.csv', index_label='timestamp_utc')
     ranges = frame.tail(40).High - frame.tail(40).Low
+    # Flag suspicious runs of near-flat candles in both the AI sample and chart window.
+    # Thresholds are diagnostic only; they do not infer why the candles are flat.
+    narrow_threshold = {'5min': 0.15, '15min': 0.30, '1h': 0.30}.get(interval, 0.30)
+    ai_quality = candle_range_quality(frame.tail(40), narrow_threshold)
+    chart_quality = candle_range_quality(frame.tail(120), narrow_threshold)
+    quality_review_required = requires_candle_quality_review(ai_quality, chart_quality)
     age = (now - (frame.index[-1] + pd.Timedelta(minutes=minutes))).total_seconds() / 60
     diagnostic = {
         'interval': interval, 'candles_available': len(frame), 'candles_sent': 40,
@@ -85,11 +108,19 @@ def fetch_chart(key, interval, minutes, now, folder):
         'run_is_myt_weekend': bool(now.tz_convert('Asia/Kuala_Lumpur').dayofweek >= 5),
         'market_session_verified': False,
         'recent_range_min': float(ranges.min()), 'recent_range_max': float(ranges.max()),
-        'recent_range_median': float(ranges.median()), 'diagnostic_narrow_range_threshold_usd': 0.05,
-        'recent_narrow_range_count': int((ranges <= 0.050000001).sum()),
+        'recent_range_median': float(ranges.median()), 'diagnostic_narrow_range_threshold_usd': narrow_threshold,
+        'recent_narrow_range_count': ai_quality['count'],
+        'recent_narrow_range_ratio': ai_quality['ratio'],
+        'recent_narrow_range_longest_run': ai_quality['longest_run'],
+        'chart_window_narrow_range_count': chart_quality['count'],
+        'chart_window_narrow_range_ratio': chart_quality['ratio'],
+        'chart_window_narrow_range_longest_run': chart_quality['longest_run'],
+        'quality_review_required': quality_review_required,
+        'quality_verdict': 'REVIEW_REQUIRED' if quality_review_required else 'NO_NARROW_RUN_FLAG',
+        'quality_cause': 'UNKNOWN',
+        'data_validation_status': 'UNVERIFIED_TEST_ONLY',
         'recent_zero_range_count': int((ranges.abs() <= 0.000000001).sum()),
         'time_gaps_in_sample': int((frame.index.to_series().diff() > pd.Timedelta(minutes=minutes)).sum()),
-        'quality_verdict': 'UNVERIFIED_TEST_ONLY',
         'note': '时间新不代表有效行情；窄幅统计为诊断，不判定原因；周末标记不替代交易时段日历。'}
     plot = frame.tail(120).copy()
     plot.index = plot.index.tz_convert('Asia/Kuala_Lumpur').tz_localize(None)
@@ -236,6 +267,12 @@ def main():
                 safety_reasons.append('M5 data stale')
             if m5_diagnostic.get('run_is_myt_weekend'):
                 safety_reasons.append('weekend')
+            for chart_diagnostic in record.get('charts', []):
+                if chart_diagnostic.get('quality_review_required'):
+                    safety_reasons.append(
+                        chart_diagnostic.get('interval', 'unknown')
+                        + ' suspicious near-flat candle run; data quality review required'
+                    )
             if not m5_diagnostic.get('market_session_verified'):
                 safety_reasons.append('market session unverified')
         safety_gate = {'passed': not safety_reasons, 'reasons': safety_reasons}
