@@ -133,9 +133,15 @@ def post(url, **kwargs):
             json={'model': MODEL, 'messages': [{'role': 'user', 'content': content}],
                   'temperature': 0.2, 'reasoning_effort': 'low',
                   'max_tokens': 8192, 'stream': False}, timeout=(10, 120))
-    except requests.RequestException as exc:
+    except Exception as exc:
         response = None
-        primary_failure = 'SenseNova connection error: ' + type(exc).__name__
+        error_text = str(exc)
+        if isinstance(exc, requests.RequestException):
+            primary_failure = 'SenseNova connection error: ' + type(exc).__name__
+        elif isinstance(exc, RuntimeError) and error_text.startswith('SenseNova transport failure:'):
+            primary_failure = error_text
+        else:
+            raise
     else:
         primary_failure = ('SenseNova HTTP ' + str(response.status_code)) if (
             response.status_code == 429 or response.status_code >= 500) else ''
