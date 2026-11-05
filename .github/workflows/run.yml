@@ -37,11 +37,11 @@ jobs:
           restore-keys: |
             daily-market-memory-
 
-      - name: Test daily memory
-        run: python -m unittest -v test_daily_memory test_analysis_ingest
-
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Test daily memory
+        run: python -m unittest -v test_daily_memory test_analysis_ingest
 
       - name: Verify chart imports
         run: python -c "import six; import mplfinance; import sensenova_runner"
