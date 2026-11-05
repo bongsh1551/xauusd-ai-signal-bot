@@ -1,0 +1,48 @@
+{
+  "case_id": "XAUUSD-YYYYMMDD-SESSION-001",
+  "as_of_utc": "2026-01-01T08:00:00Z",
+  "instrument": "XAUUSD",
+  "session": "ASIA | LONDON | NEW_YORK | OTHER | UNKNOWN",
+  "model_input": {
+    "timeframes": {
+      "H1": {"ohlc_file": "H1.csv", "chart_file": "H1.png", "last_closed_candle_utc": "2026-01-01T07:00:00Z"},
+      "M15": {"ohlc_file": "M15.csv", "chart_file": "M15.png", "last_closed_candle_utc": "2026-01-01T07:45:00Z"},
+      "M5": {"ohlc_file": "M5.csv", "chart_file": "M5.png", "last_closed_candle_utc": "2026-01-01T07:55:00Z"}
+    },
+    "market_context": {
+      "calendar": "UNKNOWN",
+      "currency_strength": "UNKNOWN",
+      "dxy": "UNKNOWN",
+      "us_yields": "UNKNOWN",
+      "news": "UNKNOWN",
+      "spread_usd": null
+    }
+  },
+  "reference": {
+    "annotators": ["annotator-1", "annotator-2"],
+    "higher_timeframe_bias": "BULLISH | BEARISH | RANGE | UNCLEAR",
+    "structure_evidence": [
+      {"timeframe": "H1 | M15 | M5", "event": "HH | HL | LH | LL | BOS | CHoCH | MSS | SWEEP | DISPLACEMENT", "candle_time_utc": "2026-01-01T07:00:00Z", "price": null, "notes": ""}
+    ],
+    "poi": [
+      {"type": "OB | FVG | SUPPLY | DEMAND | LIQUIDITY", "low": null, "high": null, "direction": "BUY | SELL", "evidence": ""}
+    ],
+    "decision_at_cutoff": "WAIT | APPROACH | CONFIRMED | DATA_INSUFFICIENT",
+    "valid_setup": null,
+    "direction": "BUY | SELL | NONE",
+    "trigger_time_utc": null,
+    "structural_invalidation": null,
+    "first_target": null,
+    "minimum_rr_after_costs": null,
+    "objective_reason_if_no_trade": ""
+  },
+  "outcome_window": {
+    "start_utc": null,
+    "end_utc": null,
+    "ohlc_file": null,
+    "mfe_usd": null,
+    "mae_usd": null,
+    "target_hit_first": "YES | NO | AMBIGUOUS | NOT_APPLICABLE",
+    "notes": "Outcome data must never be sent as model_input."
+  }
+}
