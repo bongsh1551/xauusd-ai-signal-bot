@@ -217,8 +217,8 @@ def main():
                        + '\n当前大马时间：' + now.tz_convert('Asia/Kuala_Lumpur').isoformat()
                        + '\n不编造宏观背景，不把新时间戳等同于有效行情。只基于以下输入。')
         memory_context = daily_memory.context_text(memory_state, now.to_pydatetime())
-        if memory_state.get('latest_analysis') is None:
-            memory_context += '\nNo prior analysis is available. Establish the opening market context from the current inputs.'
+        if memory_state.get('opening_plan') is None:
+            memory_context += '\nNo opening plan exists for the current MYT date. Establish a fresh opening context today; prior_session_context is reference only.'
         parts = [{'text': instruction}, {'text': '【DAILY MARKET MEMORY｜24小时连续上下文】\n' + memory_context}]
         (folder / 'execution_instruction.txt').write_text(instruction, encoding='utf-8')
         m5_frame = None
