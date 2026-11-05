@@ -30,6 +30,14 @@ jobs:
           restore-keys: |
             fx-strength-
 
+      - name: Restore 24-hour market memory
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/daily_market_memory.json
+          key: daily-market-memory-${{ github.run_id }}
+          restore-keys: |
+            daily-market-memory-
+
       - name: Test daily memory
         run: python -m unittest -v test_daily_memory
 
@@ -48,6 +56,13 @@ jobs:
           SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
           PLAN_UPDATE_TOKEN: ${{ secrets.PLAN_UPDATE_TOKEN }}
         run: python publication_guard.py
+
+      - name: Save 24-hour market memory
+        if: always() && hashFiles('.cache/daily_market_memory.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/daily_market_memory.json
+          key: daily-market-memory-${{ github.run_id }}
 
       - name: Save refreshed hourly FX cache
         if: always() && hashFiles('.cache/fx_strength.updated') != ''

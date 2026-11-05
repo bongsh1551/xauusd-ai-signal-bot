@@ -1,0 +1,27 @@
+name: Market Memory Tests
+
+on:
+  pull_request:
+    paths:
+      - 'daily_memory.py'
+      - 'test_daily_memory.py'
+      - 'main.py'
+      - 'prompts/scalper.txt'
+      - '.github/workflows/test-market-memory.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  market-memory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python sources
+        run: python -m compileall -q daily_memory.py main.py sensenova_runner.py
+      - name: Run 24-hour memory tests
+        run: python -m unittest -v test_daily_memory
