@@ -9,6 +9,8 @@ on:
       - 'sensenova_runner.py'
       - 'fundamentals.py'
       - 'test_market_memory_pipeline.py'
+      - 'test_shadow_mode.py'
+      - 'publication_guard.py'
       - 'test_market_data_quality.py'
       - 'test_fundamentals_cache.py'
       - 'test_sensenova_validation.py'
@@ -30,6 +32,6 @@ jobs:
       - name: Install project dependencies
         run: pip install -r requirements.txt
       - name: Compile Python sources
-        run: python -m compileall -q daily_memory.py fundamentals.py main.py sensenova_runner.py sensenova_transport.py publication_guard.py
+        run: python -m compileall -q daily_memory.py fundamentals.py main.py sensenova_runner.py sensenova_transport.py publication_guard.py test_shadow_mode.py
       - name: Run complete offline regression suite
-        run: python -m unittest -v test_daily_memory test_market_data_quality test_fundamentals_cache test_sensenova_validation test_market_memory_pipeline
+        run: python -m unittest -v test_daily_memory test_market_data_quality test_fundamentals_cache test_sensenova_validation test_market_memory_pipeline test_shadow_mode
