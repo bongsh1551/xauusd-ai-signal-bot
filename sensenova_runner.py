@@ -28,29 +28,87 @@ def normalize_content(value):
     raise RuntimeError('SenseNova: unsupported content; publication blocked')
 
 
+def _is_finite_number(value):
+    import math
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _require_text(value, field):
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError('SenseNova: invalid ' + field + '; publication blocked')
+
+
 def validate_analysis(text):
+    """Validate the model's complete machine-readable publication contract."""
     plain = text.replace('**', '')
-    statuses = re.findall(r'^\s*状态\s*[:：]\s*(WAIT|APPROACH|CONFIRMED)\b', plain, re.M)
+    statuses = re.findall(r'^\\s*状态\\s*[:：]\\s*(WAIT|APPROACH|CONFIRMED)\\b', plain, re.M)
     if len(statuses) != 1:
         raise RuntimeError('SenseNova: missing or ambiguous analysis status; publication blocked')
     status = statuses[0]
+
+    blocks = {}
     for label in ('trade_plan', 'market_watch'):
-        markers = re.findall(r'```\s*' + label + r'\b', text)
+        markers = re.findall(r'```\\s*' + label + r'\\b', text)
         if len(markers) > 1:
             raise RuntimeError('SenseNova: duplicate ' + label + ' blocks')
         block = pipeline.extract_json_block(text, label)
         if markers and block is None:
             raise RuntimeError('SenseNova: malformed ' + label + ' JSON; publication blocked')
-        if label == 'market_watch':
-            if block is None or not isinstance(block.get('zones'), list):
-                raise RuntimeError('SenseNova: missing or invalid market_watch zones')
-        elif status in ('WAIT', 'APPROACH'):
-            if block is not None:
-                raise RuntimeError('SenseNova: non-confirmed analysis contains trade_plan; publication blocked')
-        elif block is None or block.get('status') != 'ENTRY_READY':
-            raise RuntimeError('SenseNova: CONFIRMED requires ENTRY_READY trade_plan; publication blocked')
-    return status
+        blocks[label] = block
 
+    watch = blocks['market_watch']
+    if watch is None or not isinstance(watch.get('zones'), list):
+        raise RuntimeError('SenseNova: missing or invalid market_watch zones')
+    zones = watch['zones']
+    if len(zones) > 2:
+        raise RuntimeError('SenseNova: market_watch exceeds two zones; publication blocked')
+    allowed_zone_types = {'demand', 'supply', 'ob', 'fvg', 'liquidity'}
+    for index, zone in enumerate(zones):
+        prefix = 'market_watch zone ' + str(index + 1)
+        if not isinstance(zone, dict):
+            raise RuntimeError('SenseNova: invalid ' + prefix)
+        if zone.get('direction') not in ('BUY', 'SELL'):
+            raise RuntimeError('SenseNova: invalid ' + prefix + ' direction')
+        if zone.get('zone_type') not in allowed_zone_types:
+            raise RuntimeError('SenseNova: invalid ' + prefix + ' zone_type')
+        low, high = zone.get('low'), zone.get('high')
+        if not _is_finite_number(low) or not _is_finite_number(high) or low > high:
+            raise RuntimeError('SenseNova: invalid ' + prefix + ' price bounds')
+        if zone.get('status') not in ('WAIT', 'APPROACH'):
+            raise RuntimeError('SenseNova: invalid ' + prefix + ' status')
+        _require_text(zone.get('entry_trigger'), prefix + ' entry_trigger')
+        _require_text(zone.get('cancel_condition'), prefix + ' cancel_condition')
+
+    plan = blocks['trade_plan']
+    if status in ('WAIT', 'APPROACH'):
+        if plan is not None:
+            raise RuntimeError('SenseNova: non-confirmed analysis contains trade_plan; publication blocked')
+    else:
+        if not isinstance(plan, dict) or plan.get('status') != 'ENTRY_READY':
+            raise RuntimeError('SenseNova: CONFIRMED requires ENTRY_READY trade_plan; publication blocked')
+        if plan.get('direction') not in ('BUY', 'SELL'):
+            raise RuntimeError('SenseNova: invalid trade_plan direction')
+        _require_text(plan.get('zone'), 'trade_plan zone')
+        _require_text(plan.get('entry_trigger'), 'trade_plan entry_trigger')
+        _require_text(plan.get('reason'), 'trade_plan reason')
+        if not _is_finite_number(plan.get('stop_loss')):
+            raise RuntimeError('SenseNova: invalid trade_plan stop_loss')
+        targets = plan.get('take_profits')
+        if not isinstance(targets, list) or not 1 <= len(targets) <= 2:
+            raise RuntimeError('SenseNova: trade_plan requires one or two take_profits')
+        if not all(_is_finite_number(target) for target in targets):
+            raise RuntimeError('SenseNova: invalid trade_plan take_profits')
+        stop = plan['stop_loss']
+        if plan['direction'] == 'BUY' and any(target <= stop for target in targets):
+            raise RuntimeError('SenseNova: BUY take_profit must be above stop_loss')
+        if plan['direction'] == 'SELL' and any(target >= stop for target in targets):
+            raise RuntimeError('SenseNova: SELL take_profit must be below stop_loss')
+        if plan.get('confidence') not in ('高', '中', '低'):
+            raise RuntimeError('SenseNova: invalid trade_plan confidence')
+        valid_minutes = plan.get('valid_minutes')
+        if type(valid_minutes) is not int or not 1 <= valid_minutes <= 240:
+            raise RuntimeError('SenseNova: invalid trade_plan valid_minutes')
+    return status
 
 def post(url, **kwargs):
     global LAST_DIAGNOSTIC
