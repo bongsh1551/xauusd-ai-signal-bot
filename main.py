@@ -354,11 +354,18 @@ def main():
             json.dumps(market_watch, ensure_ascii=False, indent=2), encoding='utf-8')
         save_record(record_path, record)
         if not safety_gate['passed']:
-            message = (HEADER + '\n\n状态：WAIT（安全闸拦截）\n'
-                       + '时间：' + record['created_at_myt'] + '\n'
-                       + ('价格：' + f'{current_price:.2f}' + '\n' if current_price is not None else '')
-                       + '原因：' + '; '.join(safety_reasons) + '\n'
-                       + '未满足实时信号安全条件；不提供 ENTRY_READY。')
+            if ANALYSIS_MODE == 'shadow':
+                # Keep the model's chart interpretation visible for evaluation,
+                # while the safety-normalized text has had any ENTRY_READY plan removed.
+                message = (HEADER + '\n\n' + analysis.removeprefix(HEADER).lstrip()
+                           + '\n\n影子模式限制：仅供观察与评估；不构成交易信号，不上传计划，不执行交易。'
+                           + '\n安全限制：' + '; '.join(safety_reasons))
+            else:
+                message = (HEADER + '\n\n状态：WAIT（安全闸拦截）\n'
+                           + '时间：' + record['created_at_myt'] + '\n'
+                           + ('价格：' + f'{current_price:.2f}' + '\n' if current_price is not None else '')
+                           + '原因：' + '; '.join(safety_reasons) + '\n'
+                           + '未满足实时信号安全条件；不提供 ENTRY_READY。')
         else:
             message = HEADER + '\n\n' + analysis.removeprefix(HEADER).lstrip()
             if trade_plan:
