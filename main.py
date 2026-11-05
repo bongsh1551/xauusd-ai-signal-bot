@@ -118,9 +118,9 @@ def fetch_chart(key, interval, minutes, now, folder):
         'quality_review_required': quality_review_required,
         'quality_verdict': 'REVIEW_REQUIRED' if quality_review_required else 'NO_NARROW_RUN_FLAG',
         'quality_cause': 'UNKNOWN',
+        'data_validation_status': 'UNVERIFIED_TEST_ONLY',
         'recent_zero_range_count': int((ranges.abs() <= 0.000000001).sum()),
         'time_gaps_in_sample': int((frame.index.to_series().diff() > pd.Timedelta(minutes=minutes)).sum()),
-        'quality_verdict': 'UNVERIFIED_TEST_ONLY',
         'note': '时间新不代表有效行情；窄幅统计为诊断，不判定原因；周末标记不替代交易时段日历。'}
     plot = frame.tail(120).copy()
     plot.index = plot.index.tz_convert('Asia/Kuala_Lumpur').tz_localize(None)
@@ -267,8 +267,12 @@ def main():
                 safety_reasons.append('M5 data stale')
             if m5_diagnostic.get('run_is_myt_weekend'):
                 safety_reasons.append('weekend')
-            if m5_diagnostic.get('quality_review_required'):
-                safety_reasons.append('M5 suspicious near-flat candle run; data quality review required')
+            for chart_diagnostic in record.get('charts', []):
+                if chart_diagnostic.get('quality_review_required'):
+                    safety_reasons.append(
+                        chart_diagnostic.get('interval', 'unknown')
+                        + ' suspicious near-flat candle run; data quality review required'
+                    )
             if not m5_diagnostic.get('market_session_verified'):
                 safety_reasons.append('market session unverified')
         safety_gate = {'passed': not safety_reasons, 'reasons': safety_reasons}
