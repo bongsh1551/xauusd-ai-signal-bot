@@ -1,16 +1,21 @@
-"""Retry connection establishment and log safe payload/latency diagnostics only."""
+"""SenseNova-only transport: three attempts, five seconds between retries."""
 import json
 import time
 from types import SimpleNamespace
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 import requests
 from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
+MAX_ATTEMPTS = 3
+RETRY_SECONDS = 5
+RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
+
+class SenseNovaRequestFailed(RuntimeError):
+    pass
 
 def error_types(exc):
-    seen = set()
-    names = []
-    pending = [exc]
+    seen, names, pending = set(), [], [exc]
     while pending and len(seen) < 12:
         item = pending.pop(0)
         if not isinstance(item, BaseException) or id(item) in seen:
@@ -21,72 +26,91 @@ def error_types(exc):
         pending.extend(x for x in item.args if isinstance(x, BaseException))
     return sorted(set(names))
 
-
 def payload_diagnostics(payload):
-    """Return sizes/counts only; never return prompt text, image data, or credentials."""
-    encoded_bytes = len(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
-    image_data_chars = 0
-    image_count = 0
-    message_count = 0
+    size = len(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+    images = chars = messages = 0
     for message in payload.get('messages', []) if isinstance(payload, dict) else []:
-        message_count += 1
+        messages += 1
         content = message.get('content', []) if isinstance(message, dict) else []
         for part in content if isinstance(content, list) else []:
             if isinstance(part, dict) and part.get('type') == 'image_url':
-                image_count += 1
-                image_url = part.get('image_url', {})
-                value = image_url.get('url', '') if isinstance(image_url, dict) else ''
+                images += 1
+                image = part.get('image_url', {})
+                value = image.get('url', '') if isinstance(image, dict) else ''
                 if isinstance(value, str) and value.startswith('data:'):
-                    image_data_chars += len(value.partition(',')[2])
-    return {
-        'request_json_bytes': encoded_bytes,
-        'image_count': image_count,
-        'image_base64_chars': image_data_chars,
-        'message_count': message_count,
-    }
+                    chars += len(value.partition(',')[2])
+    return dict(request_json_bytes=size, image_count=images,
+                image_base64_chars=chars, message_count=messages)
 
+def retry_after_seconds(response):
+    value = response.headers.get('Retry-After')
+    if value is None:
+        return 0.0
+    try:
+        return max(0.0, float(value))
+    except (ValueError, TypeError):
+        try:
+            when = parsedate_to_datetime(value)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            return max(0.0, (when-datetime.now(timezone.utc)).total_seconds())
+        except (ValueError, TypeError, OverflowError):
+            return 0.0
+
+def disabled_fallback(*args, **kwargs):
+    raise SenseNovaRequestFailed('Gemini fallback disabled by SenseNova-only policy')
+
+def request_with_retry(session, url, options, sleep=None):
+    sleep = time.sleep if sleep is None else sleep
+    diagnostics = payload_diagnostics(options.get('json', {}))
+    started = time.monotonic()
+    for attempt in range(1, MAX_ATTEMPTS+1):
+        response, retryable, failure = None, False, None
+        try:
+            response = session.post(url, **options)
+        except (requests.exceptions.SSLError, requests.exceptions.ProxyError) as exc:
+            failure = type(exc).__name__
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            retryable, failure = True, type(exc).__name__
+        except requests.exceptions.RequestException as exc:
+            failure = type(exc).__name__
+        if response is not None:
+            status = response.status_code
+            if 200 <= status < 300:
+                print(json.dumps(dict(event='sensenova_request_success', attempt=attempt,
+                    max_attempts=MAX_ATTEMPTS, http_status=status, **diagnostics), sort_keys=True))
+                return response
+            retryable, failure = status in RETRYABLE_STATUS, 'HTTP_'+str(status)
+            if retry_after_seconds(response) > RETRY_SECONDS:
+                retryable = False
+                failure += '_RETRY_AFTER_EXCEEDS_POLICY'
+            response.close()
+        will_retry = retryable and attempt < MAX_ATTEMPTS
+        print(json.dumps(dict(event='sensenova_request_error', attempt=attempt,
+            max_attempts=MAX_ATTEMPTS, failure=failure, will_retry=will_retry,
+            delay_seconds=RETRY_SECONDS if will_retry else 0,
+            elapsed_ms=round((time.monotonic()-started)*1000, 1), **diagnostics), sort_keys=True))
+        if not will_retry:
+            raise SenseNovaRequestFailed('SenseNova request failed: '+str(failure)
+                +'; attempts='+str(attempt)+'; fallback disabled') from None
+        sleep(RETRY_SECONDS)
+    raise AssertionError('Unreachable retry state')
 
 def install(runner):
     if getattr(runner, '_safe_transport_installed', False):
         return
     original_post = requests.post
     session = requests.Session()
-    retry = Retry(total=2, connect=2, read=0, status=0, other=0,
-                  redirect=0, backoff_factor=0.5,
-                  allowed_methods=frozenset({'POST'}))
-    session.mount('https://', HTTPAdapter(max_retries=retry))
-
+    session.mount('https://', HTTPAdapter(max_retries=0))
+    runner.gemini_post_with_retry = disabled_fallback
     def post(url, **kwargs):
+        if url.startswith('https://generativelanguage.googleapis.com/'):
+            return disabled_fallback()
         if url != runner.ENDPOINT:
             return original_post(url, **kwargs)
         options = dict(kwargs)
         options['allow_redirects'] = False
         options.setdefault('timeout', (10, 120))
-        diagnostics = payload_diagnostics(options.get('json', {}))
-        started = time.perf_counter()
-        try:
-            response = session.post(url, **options)
-        except requests.exceptions.RequestException as exc:
-            names = error_types(exc)
-            diagnostic = {
-                'event': 'sensenova_transport_error',
-                **diagnostics,
-                'elapsed_ms': round((time.perf_counter() - started) * 1000, 1),
-                'timeout_seconds': list(options.get('timeout', ())),
-                'exception_types': names,
-                'connect_retries_max': 2,
-                'read_retries': 0,
-                'http_status_retries': 0,
-            }
-            print(json.dumps(diagnostic, sort_keys=True))
-            raise RuntimeError('SenseNova transport failure: ' + ','.join(names)) from None
-        print(json.dumps({
-            'event': 'sensenova_transport_response',
-            **diagnostics,
-            'elapsed_ms': round((time.perf_counter() - started) * 1000, 1),
-            'http_status': response.status_code,
-        }, sort_keys=True))
-        return response
-
+        return request_with_retry(session, url, options)
     runner.requests = SimpleNamespace(get=requests.get, post=post)
     runner._safe_transport_installed = True
