@@ -18,34 +18,59 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Detect already-enabled configuration
+        id: state
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          text=Path('.github/workflows/run.yml').read_text()
+          already='ANALYSIS_MODE: manual_signals' in text and 'MARKET_MEMORY_MODE: manual_signals' in text
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write('already='+str(already).lower()+'\n')
+          PY
       - name: Install existing test dependencies
+        id: install
         run: pip install -r requirements.txt
       - name: Apply exact-baseline formal mode wiring
-        run: python tools/activate_manual_signals.py
+        id: apply
+        if: steps.state.outputs.already != 'true'
+        run: |
+          set -euo pipefail
+          python tools/activate_manual_signals.py 2>&1 | tee "$RUNNER_TEMP/formal-apply.log"
       - name: Run complete repository tests without trading API secrets
-        run: python -m unittest discover -v
+        id: tests
+        run: |
+          set -euo pipefail
+          python -m unittest discover -v 2>&1 | tee "$RUNNER_TEMP/formal-tests.log"
       - name: Verify formal configuration imports without executing analysis
+        id: imports
         env:
           ANALYSIS_MODE: manual_signals
           MARKET_MEMORY_MODE: manual_signals
         run: |
-          python - <<'PY'
+          set -euo pipefail
+          python - <<'PY' 2>&1 | tee "$RUNNER_TEMP/formal-imports.log"
           import main, daily_memory
           from datetime import datetime, timezone
           assert main.ANALYSIS_MODE == 'manual_signals'
           assert '正式' in main.HEADER
           assert daily_memory.new_day(datetime.now(timezone.utc), 'manual_signals')['mode'] == 'manual_signals'
           PY
-      - name: Require installed formal sender before enabling the scheduled service
+      - name: Require installed formal sender
+        id: sender
         run: |
-          python - <<'PY'
+          set -euo pipefail
+          python - <<'PY' 2>&1 | tee "$RUNNER_TEMP/formal-sender.log"
           import json, urllib.request
           req=urllib.request.Request('https://goldscalp-telegram.bongsh2002.workers.dev/health',headers={'User-Agent':'GoldScalp-Activation-Check'})
           with urllib.request.urlopen(req,timeout=20) as r:
               data=json.load(r)
           assert data.get('ok') is True and data.get('manual_signal_delivery_version') == 1
           PY
-      - name: Commit actual runtime and workflow changes to main only after checks pass
+      - name: Commit runtime changes only after checks pass
+        id: enable
+        if: steps.state.outputs.already != 'true'
         run: |
           set -euo pipefail
           git config user.name 'GoldScalp Release'
@@ -54,4 +79,35 @@ jobs:
           if git diff --cached --quiet; then exit 0; fi
           git diff --cached --stat
           git commit -m 'feat: enable formal manual-only XAUUSD signal service'
+          git push origin HEAD:refs/heads/main
+      - name: Persist activation outcome without trading secrets
+        if: always()
+        env:
+          STAGES: >-
+            {"state":"${{ steps.state.outcome }}","install":"${{ steps.install.outcome }}","apply":"${{ steps.apply.outcome }}","tests":"${{ steps.tests.outcome }}","imports":"${{ steps.imports.outcome }}","sender":"${{ steps.sender.outcome }}","enable":"${{ steps.enable.outcome }}"}
+          ALREADY: ${{ steps.state.outputs.already }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,re
+          from pathlib import Path
+          from datetime import datetime,timezone
+          stages=json.loads(os.environ['STAGES'])
+          errors={}
+          for label in ('apply','tests','imports','sender'):
+              path=Path(os.environ['RUNNER_TEMP'])/('formal-'+label+'.log')
+              if path.exists():
+                  lines=[s for s in path.read_text(errors='replace').splitlines() if re.search(r'^(FAIL:|ERROR:|FAILED|.*Error:|AssertionError)',s)]
+                  errors[label]='\n'.join(lines[-8:])[-2000:]
+          already=os.environ.get('ALREADY')=='true'
+          enabled=(already or stages.get('enable')=='success') and all(stages.get(k)=='success' for k in ('tests','imports','sender'))
+          data={'source_sha':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],'at_utc':datetime.now(timezone.utc).isoformat(),'already_enabled':already,'formal_enabled_after_checks':enabled,'stages':stages,'error_summaries':errors}
+          Path('ops').mkdir(exist_ok=True)
+          Path('ops/formal-activation-status.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          PY
+          git config user.name 'GoldScalp Release'
+          git config user.email 'goldscalp-release@users.noreply.github.com'
+          git add ops/formal-activation-status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'ops: record formal activation outcome'
           git push origin HEAD:refs/heads/main
