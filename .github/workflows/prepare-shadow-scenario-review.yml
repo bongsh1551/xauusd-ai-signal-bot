@@ -1,0 +1,50 @@
+name: Prepare Shadow Scenario Integration
+
+on:
+  push:
+    branches: [fix/shadow-scenario-review-20261106]
+    paths: [.github/workflows/prepare-shadow-scenario-review.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.ref == 'refs/heads/fix/shadow-scenario-review-20261106'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply reviewed transformations to actual branch files
+        run: |
+          set -euo pipefail
+          python review/shadow_scenario_review/prepare.py prompt prompts/scalper.txt "$RUNNER_TEMP/scalper.txt"
+          mkdir -p cloudflare
+          python review/shadow_scenario_review/prepare.py worker review/shadow_scenario_review/opportunity_alerts.baseline.js cloudflare/opportunity_alerts.js
+          cp "$RUNNER_TEMP/scalper.txt" prompts/scalper.txt
+          cp review/shadow_scenario_review/scenario_review_gate.js cloudflare/scenario_review_gate.js
+      - name: Test gate and composed candidate selection without external services
+        run: |
+          set -euo pipefail
+          node --experimental-default-type=module review/shadow_scenario_review/test_review_gate.mjs
+          node --experimental-default-type=module review/shadow_scenario_review/test_composed_alerts.mjs
+      - name: Install existing test dependencies
+        run: pip install -r requirements.txt
+      - name: Run repository tests without trading API secrets
+        run: python -m unittest discover -v
+      - name: Commit only generated integration files to the same repair branch
+        run: |
+          set -euo pipefail
+          git config user.name 'GoldScalp Review'
+          git config user.email 'goldscalp-review@users.noreply.github.com'
+          git add prompts/scalper.txt cloudflare/opportunity_alerts.js cloudflare/scenario_review_gate.js
+          if git diff --cached --quiet; then exit 0; fi
+          git diff --cached --stat
+          git commit -m 'fix: apply shadow scenario prompt and alert review gate'
+          git push origin HEAD:refs/heads/fix/shadow-scenario-review-20261106
