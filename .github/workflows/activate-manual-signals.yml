@@ -1,0 +1,57 @@
+name: Activate Formal Manual Signal Service
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/activate-manual-signals.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  activate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install existing test dependencies
+        run: pip install -r requirements.txt
+      - name: Apply exact-baseline formal mode wiring
+        run: python tools/activate_manual_signals.py
+      - name: Run complete repository tests without trading API secrets
+        run: python -m unittest discover -v
+      - name: Verify formal configuration imports without executing analysis
+        env:
+          ANALYSIS_MODE: manual_signals
+          MARKET_MEMORY_MODE: manual_signals
+        run: |
+          python - <<'PY'
+          import main, daily_memory
+          from datetime import datetime, timezone
+          assert main.ANALYSIS_MODE == 'manual_signals'
+          assert '正式' in main.HEADER
+          assert daily_memory.new_day(datetime.now(timezone.utc), 'manual_signals')['mode'] == 'manual_signals'
+          PY
+      - name: Require installed formal sender before enabling the scheduled service
+        run: |
+          python - <<'PY'
+          import json, urllib.request
+          req=urllib.request.Request('https://goldscalp-telegram.bongsh2002.workers.dev/health',headers={'User-Agent':'GoldScalp-Activation-Check'})
+          with urllib.request.urlopen(req,timeout=20) as r:
+              data=json.load(r)
+          assert data.get('ok') is True and data.get('manual_signal_delivery_version') == 1
+          PY
+      - name: Commit actual runtime and workflow changes to main only after checks pass
+        run: |
+          set -euo pipefail
+          git config user.name 'GoldScalp Release'
+          git config user.email 'goldscalp-release@users.noreply.github.com'
+          git add main.py daily_memory.py publication_guard.py .github/workflows/run.yml
+          if git diff --cached --quiet; then exit 0; fi
+          git diff --cached --stat
+          git commit -m 'feat: enable formal manual-only XAUUSD signal service'
+          git push origin HEAD:refs/heads/main
