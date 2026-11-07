@@ -8,9 +8,13 @@ a SELL zone may be marked APPROACH.
 from __future__ import annotations
 
 import json
+import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from lifecycle_contract import normalize_lifecycle_contract
+
+STATE_PATH = Path(os.getenv('ZONE_LIFECYCLE_STATE_PATH', '.cache/zone_lifecycle_state.json'))
 
 
 def _finite(value: Any) -> bool:
@@ -24,19 +28,21 @@ def _zone_bounds(zone: Dict[str, Any]) -> Optional[Tuple[float, float]]:
     return float(low), float(high)
 
 
-def _atr(values: List[float], period: int = 14) -> Optional[float]:
-    if len(values) < period + 1:
+def _atr(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Optional[float]:
+    if len(closes) < period + 1:
         return None
     trs = []
-    for index in range(1, len(values)):
-        trs.append(abs(values[index] - values[index - 1]))
+    for index in range(1, len(closes)):
+        high, low, previous_close = highs[index], lows[index], closes[index - 1]
+        trs.append(max(high - low, abs(high - previous_close), abs(low - previous_close)))
     sample = trs[-period:]
     return sum(sample) / len(sample) if sample else None
 
 
-def _m5_series_from_parts(parts: List[Dict[str, Any]]) -> Tuple[List[float], List[float]]:
+def _m5_series_from_parts(parts: List[Dict[str, Any]]) -> Tuple[List[float], List[float], List[float]]:
     closes: List[float] = []
-    ranges: List[float] = []
+    highs: List[float] = []
+    lows: List[float] = []
     for part in parts:
         if not isinstance(part, dict):
             continue
@@ -53,8 +59,9 @@ def _m5_series_from_parts(parts: List[Dict[str, Any]]) -> Tuple[List[float], Lis
             except (TypeError, ValueError):
                 continue
             closes.append(close)
-            ranges.append(high - low)
-    return closes, ranges
+            highs.append(high)
+            lows.append(low)
+    return closes, highs, lows
 
 
 def _stable_scenario_id(zone: Dict[str, Any]) -> Optional[str]:
@@ -64,6 +71,21 @@ def _stable_scenario_id(zone: Dict[str, Any]) -> Optional[str]:
     if direction not in ("BUY", "SELL") or not isinstance(origin, str) or not origin.strip():
         return None
     return f"{direction}:{timeframe}:{origin.strip()}"
+
+
+def _load_invalidated() -> Dict[str, Any]:
+    try:
+        value = json.loads(STATE_PATH.read_text(encoding='utf-8'))
+        return value if isinstance(value, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_invalidated(states: Dict[str, Any]) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = STATE_PATH.with_suffix('.tmp')
+    temporary.write_text(json.dumps(states, ensure_ascii=False, indent=2, sort_keys=True), encoding='utf-8')
+    temporary.replace(STATE_PATH)
 
 
 def _replace_market_watch_block(text: str, watch: Dict[str, Any]) -> str:
@@ -87,11 +109,11 @@ def _fundamental_context(watch: Dict[str, Any], zone: Dict[str, Any]) -> Dict[st
 
 def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     parts = (((kwargs.get("json") or {}).get("contents") or [{}])[0].get("parts") or [])
-    closes, ranges = _m5_series_from_parts(parts)
+    closes, highs, lows = _m5_series_from_parts(parts)
     if not closes:
         raise RuntimeError("zone lifecycle: M5 closes unavailable")
     latest_close = closes[-1]
-    atr = _atr(ranges)
+    atr = _atr(highs, lows, closes)
     buffer = 0.25 * atr if atr and atr > 0 else 0.0
 
     match = re.search(r"```market_watch\s*\n(\{.*?\})\s*\n```", text, re.DOTALL)
@@ -104,6 +126,8 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
     if not isinstance(watch, dict) or not isinstance(watch.get("zones"), list):
         raise RuntimeError("zone lifecycle: market_watch zones missing")
 
+    persisted = _load_invalidated()
+    changed = False
     changes = []
     for zone in watch["zones"]:
         if not isinstance(zone, dict):
@@ -117,6 +141,13 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
             zone["status"] = "WAIT"
             zone["lifecycle_reason"] = "MISSING_STABLE_SCENARIO_ID"
             changes.append({"action": "WAIT", "reason": "missing origin/timeframe"})
+            continue
+
+        if persisted.get(scenario_id) == 'INVALIDATED':
+            zone["status"] = "INVALIDATED"
+            zone["alert_allowed"] = False
+            zone["lifecycle_reason"] = "PRIOR_INVALIDATION_PERSISTED"
+            changes.append({"action": "KEEP_INVALIDATED", "scenario_id": scenario_id})
             continue
 
         bounds = _zone_bounds(zone)
@@ -133,6 +164,8 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
         if prior_status == "INVALIDATED":
             zone["status"] = "INVALIDATED"
             zone["alert_allowed"] = False
+            persisted[scenario_id] = 'INVALIDATED'
+            changed = True
             changes.append({"action": "KEEP_INVALIDATED", "scenario_id": scenario_id})
             continue
 
@@ -142,6 +175,8 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
             zone["close_through"] = True
             zone["alert_allowed"] = False
             zone["lifecycle_reason"] = "TWO_M5_CLOSES_ABOVE_SUPPLY"
+            persisted[scenario_id] = 'INVALIDATED'
+            changed = True
             changes.append({"action": "INVALIDATED", "scenario_id": scenario_id})
             continue
         if closes_above == 1:
@@ -197,6 +232,8 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
             zone["lifecycle_reason"] = "CONFLUENCE_VERIFIED"
             changes.append({"action": "APPROACH", "scenario_id": scenario_id})
 
+    if changed:
+        _save_invalidated(persisted)
     text, contract_blocks = normalize_lifecycle_contract(text, watch)
     updated_text = _replace_market_watch_block(text, watch)
     diagnostic = {
@@ -205,5 +242,6 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
         "invalidation_buffer": buffer,
         "changes": changes,
         "contract_blocks": contract_blocks,
+        "persisted_invalidations": sorted(persisted),
     }
     return updated_text, diagnostic
