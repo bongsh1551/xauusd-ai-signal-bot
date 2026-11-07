@@ -11,37 +11,46 @@ def _kwargs(closes):
     return {'json': {'contents': [{'parts': [{'text': '5min 已收线 OHLC，UTC：\n' + csv}]}]}}
 
 
-def _analysis(status='WAIT'):
+def _analysis(status='WAIT', h1_bias='bearish', currency='neutral', calendar='low', confirmations=True):
     zone = {'direction': 'SELL', 'zone_type': 'supply', 'low': 100.0, 'high': 101.0,
             'status': status, 'timeframe': 'M15', 'origin_candle_time': '2026-11-07T00:00:00Z',
-            'entry_trigger': 'bearish confirmation', 'cancel_condition': 'M5 close above high'}
-    watch = {'zones': [zone]}
+            'entry_trigger': 'bearish confirmation', 'cancel_condition': 'M5 close above high',
+            'h1_bias': h1_bias,
+            'confirmations': {'sweep': confirmations, 'rejection': confirmations,
+                              'displacement': confirmations, 'mss': confirmations}}
+    watch = {'zones': [zone], 'news_bias': 'bearish', 'currency_strength': currency,
+             'calendar_risk': calendar, 'fundamental_note': 'context available'}
     return '状态：' + status + '\n```market_watch\n' + json.dumps(watch) + '\n```'
 
 
-def test_normal_zone_remains_wait():
+def test_normal_confluence_approach():
     text, diagnostic = apply_zone_lifecycle(_analysis(), _kwargs([100.0, 100.5]))
-    assert 'WAIT' in text
-    assert diagnostic['changes'] == []
+    assert 'APPROACH' in text
+    assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
-def test_one_close_through_marks_broken():
-    text, diagnostic = apply_zone_lifecycle(_analysis(), _kwargs([100.0, 101.5]))
-    assert 'BROKEN' in text
-    assert diagnostic['changes'][0]['action'] == 'BROKEN'
-
-
-def test_two_close_throughs_invalidate():
-    text, diagnostic = apply_zone_lifecycle(_analysis(), _kwargs([101.5, 101.6]))
-    assert 'INVALIDATED' in text
-    assert diagnostic['changes'][0]['action'] == 'INVALIDATED'
-
-
-def test_missing_origin_forces_wait():
-    zone = {'direction': 'SELL', 'zone_type': 'supply', 'low': 100.0, 'high': 101.0,
-            'status': 'APPROACH', 'entry_trigger': 'x', 'cancel_condition': 'y'}
-    watch = {'zones': [zone]}
-    text = '状态：WAIT\n```market_watch\n' + json.dumps(watch) + '\n```'
+def test_missing_fundamental_forces_wait():
+    import re as _re
+    text = _analysis()
+    text = _re.sub(r'"news_bias": "bearish",|"currency_strength": "neutral",|"calendar_risk": "low",|"fundamental_note": "context available",', '', text)
     updated, diagnostic = apply_zone_lifecycle(text, _kwargs([100.0, 100.5]))
-    assert 'MISSING_STABLE_SCENARIO_ID' in updated
+    assert 'FUNDAMENTAL_CONTEXT_MISSING' in updated
+    assert diagnostic['changes'][0]['action'] == 'WAIT'
+
+
+def test_usd_conflict_forces_wait():
+    text, diagnostic = apply_zone_lifecycle(_analysis(currency='usd_bullish'), _kwargs([100.0, 100.5]))
+    assert 'USD_STRENGTH_CONFLICT' in text
+    assert diagnostic['changes'][0]['action'] == 'WAIT'
+
+
+def test_high_impact_news_pauses():
+    text, diagnostic = apply_zone_lifecycle(_analysis(calendar='high_impact'), _kwargs([100.0, 100.5]))
+    assert 'HIGH_IMPACT_NEWS_WINDOW' in text
+    assert diagnostic['changes'][0]['action'] == 'PAUSED'
+
+
+def test_missing_confirmation_forces_wait():
+    text, diagnostic = apply_zone_lifecycle(_analysis(confirmations=False), _kwargs([100.0, 100.5]))
+    assert 'TECHNICAL_CONFIRMATION_MISSING' in text
     assert diagnostic['changes'][0]['action'] == 'WAIT'
