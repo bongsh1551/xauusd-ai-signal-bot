@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
+from lifecycle_contract import normalize_lifecycle_contract
 
 
 def _finite(value: Any) -> bool:
@@ -196,11 +197,13 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
             zone["lifecycle_reason"] = "CONFLUENCE_VERIFIED"
             changes.append({"action": "APPROACH", "scenario_id": scenario_id})
 
+    text, contract_blocks = normalize_lifecycle_contract(text, watch)
     updated_text = _replace_market_watch_block(text, watch)
     diagnostic = {
         "latest_m5_close": latest_close,
         "atr": atr,
         "invalidation_buffer": buffer,
         "changes": changes,
+        "contract_blocks": contract_blocks,
     }
     return updated_text, diagnostic
