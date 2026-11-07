@@ -82,6 +82,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+      - name: Upload run replay
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xauusd-run-replay-${{ github.run_id }}
+          path: .cache/run_replay/
+          if-no-files-found: ignore
+          retention-days: 7
+
   notify_failure:
     needs: analyze
     if: failure()
@@ -107,6 +116,6 @@ jobs:
               + run_url
           )
           data = urllib.parse.urlencode({'chat_id': chat_id, 'text': text}).encode()
-          req = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendMessage', data=data)
+          req = urllib.request.Request('https://api.telegram.org/bot{token}/sendMessage'.format(token=token), data=data)
           urllib.request.urlopen(req, timeout=30)
           PY
