@@ -52,7 +52,8 @@ def test_invalidated_scenario_does_not_revive_next_run():
     assert extract_json_block(updated, 'market_watch')['zones'][0]['lifecycle_state'] == 'INVALIDATED'
     updated_again, diagnostic = apply_zone_lifecycle(_analysis(), _ohlc_kwargs([100.0, 100.5]))
     zone = extract_json_block(updated_again, 'market_watch')['zones'][0]
-    assert zone['status'] == 'INVALIDATED'
+    assert zone['status'] == 'WAIT'
+    assert zone['lifecycle_state'] == 'INVALIDATED'
     assert zone['lifecycle_reason'] == 'PRIOR_INVALIDATION_PERSISTED'
     assert zone['alert_allowed'] is False
     assert diagnostic['persisted_invalidations'] == ['SELL:M15:2026-11-07T00:00:00Z']
