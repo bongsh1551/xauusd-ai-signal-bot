@@ -27,9 +27,11 @@ export function candidates(meta, now = Date.now()) {
     Number.isFinite(z.low)&&Number.isFinite(z.high)&&z.low>0&&z.high>=z.low&&
     typeof z.entry_trigger==='string'&&z.entry_trigger.trim()&&
     typeof z.cancel_condition==='string'&&z.cancel_condition.trim()&&
+    typeof z.scenario_id==='string'&&z.scenario_id.trim()&&
+    z.status==='APPROACH'&&z.alert_allowed===true&&z.close_through===false&&
     (price>=z.low&&price<=z.high||z.status==='APPROACH')).map(z=>({
-      key:'opportunity:approach:v2:'+new Date(created+8*3600000).toISOString().slice(0,10)+':'+
-        z.direction+':'+z.zone_type+':'+z.source_interval+':'+Date.parse(z.source_candle_utc),
+      key:'opportunity:approach:v3:'+new Date(created+8*3600000).toISOString().slice(0,10)+':'+
+        z.scenario_id+':APPROACH',
       text:'XAUUSD 机会预警｜尚未确认进场\n方向：'+z.direction+
         '\n关注区域：'+z.low.toFixed(2)+'–'+z.high.toFixed(2)+' '+z.zone_type+
         '\n本轮 M5 收盘参考：'+price.toFixed(2)+
