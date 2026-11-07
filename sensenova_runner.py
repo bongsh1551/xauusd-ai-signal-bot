@@ -206,7 +206,7 @@ def post(url, **kwargs):
     usage = result.get('usage')
     numeric_usage = {k: usage[k] for k in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'reasoning_tokens')
                      if isinstance(usage, dict) and type(usage.get(k)) in (int, float)}
-    details = usage.get('completion_tokens_details') if isinstance(details, dict) else None
+    details = usage.get('completion_tokens_details') if isinstance(usage, dict) else None
     if isinstance(details, dict) and type(details.get('reasoning_tokens')) in (int, float):
         numeric_usage['completion_reasoning_tokens'] = details['reasoning_tokens']
     LAST_DIAGNOSTIC = {'provider': 'sensenova', 'model': MODEL,
