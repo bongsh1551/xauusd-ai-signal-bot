@@ -1,0 +1,26 @@
+name: Dual AI Eval v2
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests pandas
+      - name: Run isolated diagnostic evaluation
+        env:
+          SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python tools/dual_ai_eval_v2.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dual-ai-eval-v2-report
+          path: eval_output/
+          if-no-files-found: warn
