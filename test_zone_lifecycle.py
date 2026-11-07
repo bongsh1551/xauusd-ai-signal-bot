@@ -1,6 +1,12 @@
 import json
+import pytest
 
 from zone_lifecycle import apply_zone_lifecycle
+
+
+@pytest.fixture(autouse=True)
+def isolated_lifecycle_state(tmp_path, monkeypatch):
+    monkeypatch.setenv('ZONE_LIFECYCLE_STATE_PATH', str(tmp_path / 'zone_lifecycle_state.json'))
 
 
 def _kwargs(closes):

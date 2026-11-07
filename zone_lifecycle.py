@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from lifecycle_contract import normalize_lifecycle_contract
 
-STATE_PATH = Path(os.getenv('ZONE_LIFECYCLE_STATE_PATH', '.cache/zone_lifecycle_state.json'))
+
+def _state_path() -> Path:
+    return Path(os.getenv('ZONE_LIFECYCLE_STATE_PATH', '.cache/zone_lifecycle_state.json'))
 
 
 def _finite(value: Any) -> bool:
@@ -75,17 +77,18 @@ def _stable_scenario_id(zone: Dict[str, Any]) -> Optional[str]:
 
 def _load_invalidated() -> Dict[str, Any]:
     try:
-        value = json.loads(STATE_PATH.read_text(encoding='utf-8'))
+        value = json.loads(_state_path().read_text(encoding='utf-8'))
         return value if isinstance(value, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
 
 
 def _save_invalidated(states: Dict[str, Any]) -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    temporary = STATE_PATH.with_suffix('.tmp')
+    path = _state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(states, ensure_ascii=False, indent=2, sort_keys=True), encoding='utf-8')
-    temporary.replace(STATE_PATH)
+    temporary.replace(path)
 
 
 def _replace_market_watch_block(text: str, watch: Dict[str, Any]) -> str:
