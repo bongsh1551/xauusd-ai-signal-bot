@@ -7,6 +7,7 @@ import time
 from types import SimpleNamespace
 import requests
 import main as pipeline
+import run_replay
 import zone_lifecycle
 
 MODEL = 'sensenova-6.8-flash-lite'
@@ -244,6 +245,7 @@ def save_record(path, record):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
     temporary.replace(path)
+    run_replay.update_replay(record, path.parent)
 
 
 def main():
