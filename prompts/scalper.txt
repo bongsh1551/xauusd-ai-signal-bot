@@ -163,3 +163,13 @@ review_basis：本轮新证据、旧情景是否仍合理及动能冲突的简�
 APPROACH 必须同时满足情景 ACTIVE、区域本轮复核有效及价格接近或进入。触区本身不足以构成预警。
 PAUSED/INVALIDATED 的 status 必须为 WAIT。没有可核实区域则输出空 zones，不为填字段编造。
 历史记忆中的旧预算、旧缓冲说法只是旧记录，不是本轮指令；旧复核时间不得冒充本轮时间。
+
+【Core Alignment】
+This prompt follows the shared GoldScalp core rules:
+- Use ICT / Smart Money Concepts across H1, M15, and M5.
+- H1 gives directional context; M15 locates key zones; M5 provides confirmation and timing.
+- Use liquidity sweep, displacement, and market structure shift as confirmation concepts when supported by OHLC.
+- Follow the scenario lifecycle: CANDIDATE → ACTIVE → APPROACH → ENTRY_READY.
+- Do not invent prices, times, confirmations, or market facts.
+- If evidence is insufficient or conflicting, remain in WAIT.
+- Treat fundamentals, news, and currency strength as confluence, not standalone signals.
