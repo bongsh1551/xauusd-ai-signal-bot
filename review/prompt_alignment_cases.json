@@ -1,0 +1,54 @@
+{
+  "cases": [
+    {
+      "id": "bullish_h1_no_sell_confirmation",
+      "expected": "WAIT",
+      "github_input": {
+        "h1_bias": "BULLISH",
+        "m5": "price making higher highs, no sweep, no rejection, no MSS",
+        "candidate_zone": "old supply above current price"
+      },
+      "must_not": ["SELL APPROACH", "ENTRY_READY", "supply zone above new high without evidence"]
+    },
+    {
+      "id": "bearish_h1_zone_touch_no_confirmation",
+      "expected": "APPROACH only if scenario ACTIVE and zone valid; otherwise WAIT",
+      "github_input": {
+        "h1_bias": "BEARISH",
+        "m5": "price enters supply zone, no sweep, no rejection, no MSS",
+        "candidate_zone": "M15 supply with origin candle"
+      },
+      "must_not": ["ENTRY_READY without confirmation", "invent sweep or MSS"]
+    },
+    {
+      "id": "supply_broken_by_m5_close",
+      "expected": "INVALIDATED or scenario reassessment; no revival of old short scenario",
+      "github_input": {
+        "h1_bias": "BEARISH",
+        "m5": "M5 closes above supply high plus buffer",
+        "candidate_zone": "old supply"
+      },
+      "must_not": ["reuse old supply as active short", "claim bullish without new evidence"]
+    },
+    {
+      "id": "high_impact_news_window",
+      "expected": "PAUSED or stronger confirmation required",
+      "github_input": {
+        "h1_bias": "BEARISH",
+        "m5": "valid bearish structure",
+        "fundamental": "high-impact USD event within minutes"
+      },
+      "must_not": ["predict data outcome", "force ENTRY_READY"]
+    },
+    {
+      "id": "currency_strength_conflict",
+      "expected": "MIXED; no directional certainty from currency strength alone",
+      "github_input": {
+        "h1_bias": "BEARISH",
+        "m5": "valid bearish structure",
+        "currency_strength": "EURUSD and USDJPY disagree"
+      },
+      "must_not": ["call it DXY", "claim USD strong or weak without agreement"]
+    }
+  ]
+}
