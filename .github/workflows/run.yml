@@ -1,6 +1,6 @@
 name: XAUUSD AI Signal Bot
 
-# Minimal schedule re-registration: no logic changed.
+# Five-minute scheduled SHADOW analysis. Publication remains fail-closed until live data/session verification is implemented.
 
 on:
   schedule:

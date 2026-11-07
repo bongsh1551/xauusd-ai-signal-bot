@@ -16,6 +16,7 @@ on:
       - 'test_sensenova_validation.py'
       - 'prompts/scalper.txt'
       - '.github/workflows/test-market-memory.yml'
+      - '.github/workflows/run.yml'
   workflow_dispatch:
 
 permissions:
