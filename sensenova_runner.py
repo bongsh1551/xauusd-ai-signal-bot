@@ -7,6 +7,7 @@ import time
 from types import SimpleNamespace
 import requests
 import main as pipeline
+import zone_lifecycle
 
 MODEL = 'sensenova-6.8-flash-lite'
 ENDPOINT = 'https://token.sensenova.ai/v1/chat/completions'
@@ -178,11 +179,14 @@ def post(url, **kwargs):
                                     if isinstance(p, dict) and not p.get('thought')).strip()
         if candidate.get('finishReason') != 'STOP' or not fallback_text:
             raise RuntimeError('Gemini fallback: incomplete response')
+        fallback_text, zone_lifecycle_diagnostic = zone_lifecycle.apply_zone_lifecycle(
+            fallback_text, fallback_kwargs)
         status = validate_analysis(fallback_text)
         LAST_DIAGNOSTIC = {'provider': 'gemini_fallback',
                            'model': url.rsplit('/', 1)[-1].split(':', 1)[0],
                            'fallback_reason': 'sensenova_transport_failure',
-                           'analysis_status': status}
+                           'analysis_status': status,
+                           'zone_lifecycle': zone_lifecycle_diagnostic}
         print(json.dumps({'event': 'provider_fallback_validated',
                           'provider': 'gemini', 'analysis_status': status}, sort_keys=True))
         return Response(result)
@@ -202,7 +206,7 @@ def post(url, **kwargs):
     usage = result.get('usage')
     numeric_usage = {k: usage[k] for k in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'reasoning_tokens')
                      if isinstance(usage, dict) and type(usage.get(k)) in (int, float)}
-    details = usage.get('completion_tokens_details') if isinstance(usage, dict) else None
+    details = usage.get('completion_tokens_details') if isinstance(details, dict) else None
     if isinstance(details, dict) and type(details.get('reasoning_tokens')) in (int, float):
         numeric_usage['completion_reasoning_tokens'] = details['reasoning_tokens']
     LAST_DIAGNOSTIC = {'provider': 'sensenova', 'model': MODEL,
@@ -218,11 +222,12 @@ def post(url, **kwargs):
     text = normalize_content(value).strip()
     if not text:
         raise RuntimeError('SenseNova: final content empty; publication blocked')
+    text, zone_lifecycle_diagnostic = zone_lifecycle.apply_zone_lifecycle(text, kwargs)
+    LAST_DIAGNOSTIC['zone_lifecycle'] = zone_lifecycle_diagnostic
     LAST_DIAGNOSTIC['analysis_status'] = validate_analysis(text)
     print('SenseNova contract validated: ' + LAST_DIAGNOSTIC['analysis_status'])
     return Response({'candidates': [{'finishReason': 'STOP', 'content': {'parts': [{'text': text}]}}],
                      'usageMetadata': {'provider': 'sensenova', 'model': MODEL, 'usage': numeric_usage}})
-
 
 def save_record(path, record):
     if record.get('stage') == 'gemini':
