@@ -1,8 +1,9 @@
-"""Zone lifecycle and stable scenario identity for XAUUSD market_watch.
+"""Zone lifecycle, stable scenario identity, and confluence checks for XAUUSD market_watch.
 
 The model may identify a zone, but it may not decide that an old supply zone
 remains actionable after price has closed through it.  This module enforces a
-conservative lifecycle for SELL zones before the analysis is validated.
+conservative lifecycle and requires technical plus fundamental confluence before
+a SELL zone may be marked APPROACH.
 """
 from __future__ import annotations
 
@@ -33,7 +34,6 @@ def _atr(values: List[float], period: int = 14) -> Optional[float]:
 
 
 def _m5_series_from_parts(parts: List[Dict[str, Any]]) -> Tuple[List[float], List[float]]:
-    """Extract M5 close prices and true ranges from the AI input text."""
     closes: List[float] = []
     ranges: List[float] = []
     for part in parts:
@@ -74,12 +74,17 @@ def _replace_market_watch_block(text: str, watch: Dict[str, Any]) -> str:
     return updated
 
 
-def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    """Apply conservative SELL-zone lifecycle rules to the model output.
+def _fundamental_context(watch: Dict[str, Any], zone: Dict[str, Any]) -> Dict[str, Any]:
+    source = zone if all(k in zone for k in ("news_bias", "currency_strength", "calendar_risk", "fundamental_note")) else watch
+    return {
+        "news_bias": source.get("news_bias"),
+        "currency_strength": source.get("currency_strength"),
+        "calendar_risk": source.get("calendar_risk"),
+        "fundamental_note": source.get("fundamental_note"),
+    }
 
-    Returns the updated analysis text and a diagnostic record.  It never creates
-    a new zone, never turns WAIT into APPROACH, and never enables an entry.
-    """
+
+def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     parts = (((kwargs.get("json") or {}).get("contents") or [{}])[0].get("parts") or [])
     closes, ranges = _m5_series_from_parts(parts)
     if not closes:
@@ -137,18 +142,59 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
             zone["alert_allowed"] = False
             zone["lifecycle_reason"] = "TWO_M5_CLOSES_ABOVE_SUPPLY"
             changes.append({"action": "INVALIDATED", "scenario_id": scenario_id})
-        elif closes_above == 1:
+            continue
+        if closes_above == 1:
             zone["status"] = "BROKEN"
             zone["close_through"] = True
             zone["alert_allowed"] = False
             zone["lifecycle_reason"] = "ONE_M5_CLOSE_ABOVE_SUPPLY"
             changes.append({"action": "BROKEN", "scenario_id": scenario_id})
+            continue
+
+        zone["close_through"] = False
+        h1_bias = zone.get("h1_bias") or watch.get("h1_bias")
+        confirmations = zone.get("confirmations") or {}
+        required = ("sweep", "rejection", "displacement", "mss")
+        missing = [key for key in required if not confirmations.get(key)]
+        fundamental = _fundamental_context(watch, zone)
+        missing_fundamentals = [key for key, value in fundamental.items() if value in (None, "")]
+        currency = fundamental.get("currency_strength")
+        usd_conflict = isinstance(currency, str) and currency.strip().lower() in ("usd_bullish", "usd_strong")
+        calendar = fundamental.get("calendar_risk")
+        high_impact = isinstance(calendar, str) and calendar.strip().lower() in ("high_impact", "news_window")
+
+        if h1_bias != "bearish":
+            zone["status"] = "WAIT"
+            zone["alert_allowed"] = False
+            zone["lifecycle_reason"] = "H1_BIAS_CONFLICT"
+            changes.append({"action": "WAIT", "reason": "h1 bias not bearish"})
+        elif missing:
+            zone["status"] = "WAIT"
+            zone["alert_allowed"] = False
+            zone["missing_confirmations"] = missing
+            zone["lifecycle_reason"] = "TECHNICAL_CONFIRMATION_MISSING"
+            changes.append({"action": "WAIT", "reason": "missing technical confirmations"})
+        elif missing_fundamentals:
+            zone["status"] = "WAIT"
+            zone["alert_allowed"] = False
+            zone["missing_fundamentals"] = missing_fundamentals
+            zone["lifecycle_reason"] = "FUNDAMENTAL_CONTEXT_MISSING"
+            changes.append({"action": "WAIT", "reason": "missing fundamental context"})
+        elif high_impact:
+            zone["status"] = "PAUSED"
+            zone["alert_allowed"] = False
+            zone["lifecycle_reason"] = "HIGH_IMPACT_NEWS_WINDOW"
+            changes.append({"action": "PAUSED", "reason": "high impact news window"})
+        elif usd_conflict:
+            zone["status"] = "WAIT"
+            zone["alert_allowed"] = False
+            zone["lifecycle_reason"] = "USD_STRENGTH_CONFLICT"
+            changes.append({"action": "WAIT", "reason": "usd strength conflicts with sell"})
         else:
-            zone["close_through"] = False
-            if prior_status == "APPROACH":
-                zone["status"] = "WAIT"
-                zone["lifecycle_reason"] = "LIFECYCLE_REQUIRES_CODE_CONFIRMATION"
-                changes.append({"action": "DOWNGRADED_TO_WAIT", "scenario_id": scenario_id})
+            zone["status"] = "APPROACH"
+            zone["alert_allowed"] = True
+            zone["lifecycle_reason"] = "CONFLUENCE_VERIFIED"
+            changes.append({"action": "APPROACH", "scenario_id": scenario_id})
 
     updated_text = _replace_market_watch_block(text, watch)
     diagnostic = {
