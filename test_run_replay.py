@@ -13,6 +13,7 @@ def test_update_replay_writes_and_refreshes(tmp_path):
         'charts': [{'interval': '5min'}], 'market_memory': {'status': 'SAVED'},
         'prompt_sha256': 'hash', 'ai_raw_output': 'raw',
         'trade_plan': {'status': 'WAIT'}, 'market_watch': {'zones': []},
+        'evidence_package': {'zones': [{'scenario_id': 'SELL:M15:x'}]},
         'provider_diagnostic': {'zone_lifecycle': {'zones': []}, 'analysis_status': 'WAIT'},
         'safety_gate': {'passed': True, 'reasons': []},
         'analysis_ingest': {'attempted': False}, 'telegram': {'attempted': False},
@@ -23,6 +24,7 @@ def test_update_replay_writes_and_refreshes(tmp_path):
     first = json.loads(path.read_text(encoding='utf-8'))
     assert first['run_id'] == 'run-1'
     assert first['market_data']['charts'][0]['interval'] == '5min'
+    assert first['evidence_package']['zones'][0]['scenario_id'] == 'SELL:M15:x'
     assert first['lifecycle_result'] == {'zones': []}
     assert first['validator_result']['analysis_status'] == 'WAIT'
 

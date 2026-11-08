@@ -28,6 +28,7 @@ def build_replay(record):
         'ai_raw_output': record.get('ai_raw_output'),
         'parsed_plan': record.get('trade_plan'),
         'market_watch': record.get('market_watch'),
+        'evidence_package': record.get('evidence_package'),
         'lifecycle_result': diagnostic.get('zone_lifecycle'),
         'validator_result': {
             'analysis_status': diagnostic.get('analysis_status'),
