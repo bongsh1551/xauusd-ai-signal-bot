@@ -23,23 +23,38 @@ const buyZone = {
   scenario_id: 'BUY:M15:2026-11-09T00:45:00Z',
   bullish_confirmation_verified: true
 };
-const meta = { analysis_usable: true, analysis_complete: true, analysis_status: 'APPROACH', mode: 'shadow', created_at_utc: '2026-11-09T00:59:00Z', charts, current_price: 100.5, market_watch: { zones: [baseZone] } };
+const evidence = (zone) => ({
+  scenario_id: zone.scenario_id,
+  direction: zone.direction,
+  scenario_state: 'ACTIVE',
+  status: 'APPROACH',
+  alert_allowed: true,
+  confirmation_verified: true,
+  missing_confirmations: []
+});
+const meta = { analysis_usable: true, analysis_complete: true, analysis_status: 'APPROACH', mode: 'shadow', created_at_utc: '2026-11-09T00:59:00Z', charts, current_price: 100.5, market_watch: { zones: [baseZone] }, evidence_package: { zones: [evidence(baseZone)] } };
 
 assert.equal(candidates(meta, now).length, 1);
 
 const noAlert = { ...baseZone, alert_allowed: false };
-assert.equal(candidates({ ...meta, market_watch: { zones: [noAlert] } }, now).length, 0);
+assert.equal(candidates({ ...meta, market_watch: { zones: [noAlert] }, evidence_package: { zones: [{ ...evidence(baseZone), alert_allowed: false }] } }, now).length, 0);
 
 const closedThrough = { ...baseZone, close_through: true };
 assert.equal(candidates({ ...meta, market_watch: { zones: [closedThrough] } }, now).length, 0);
 
-const buyMeta = { ...meta, market_watch: { zones: [buyZone] } };
+const buyMeta = { ...meta, market_watch: { zones: [buyZone] }, evidence_package: { zones: [evidence(buyZone)] } };
 assert.equal(candidates(buyMeta, now).length, 1);
 
 const buyUnverified = { ...buyZone, bullish_confirmation_verified: false };
-assert.equal(candidates({ ...meta, market_watch: { zones: [buyUnverified] } }, now).length, 0);
+assert.equal(candidates({ ...meta, market_watch: { zones: [buyUnverified] }, evidence_package: { zones: [{ ...evidence(buyZone), confirmation_verified: false }] } }, now).length, 0);
 
 const sellUnverified = { ...baseZone, bearish_confirmation_verified: false };
-assert.equal(candidates({ ...meta, market_watch: { zones: [sellUnverified] } }, now).length, 0);
+assert.equal(candidates({ ...meta, market_watch: { zones: [sellUnverified] }, evidence_package: { zones: [{ ...evidence(baseZone), confirmation_verified: false }] } }, now).length, 0);
+
+const missingEvidence = { ...meta, evidence_package: { zones: [] } };
+assert.equal(candidates(missingEvidence, now).length, 0);
+
+const missingConfirmation = { ...meta, evidence_package: { zones: [{ ...evidence(baseZone), missing_confirmations: ['mss'] }] } };
+assert.equal(candidates(missingConfirmation, now).length, 0);
 
 console.log('opportunity alert replay tests passed');
