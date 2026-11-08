@@ -203,6 +203,54 @@ def upload_plan(config, analysis, record):
     return result
 
 
+def build_evidence_package(market_watch):
+    """Build a structured, read-only evidence package from lifecycle-validated zones."""
+    if not isinstance(market_watch, dict):
+        return {'zones': []}
+    zones = market_watch.get('zones') or []
+    packages = []
+    for zone in zones:
+        if not isinstance(zone, dict):
+            continue
+        confirmations = zone.get('confirmations') or {}
+        required = ('sweep', 'rejection', 'displacement', 'mss')
+        missing = [key for key in required if not confirmations.get(key)]
+        packages.append({
+            'scenario_id': zone.get('scenario_id'),
+            'direction': zone.get('direction'),
+            'scenario_state': zone.get('scenario_state'),
+            'status': zone.get('status'),
+            'alert_allowed': zone.get('alert_allowed'),
+            'h1_bias': zone.get('h1_bias') or market_watch.get('h1_bias'),
+            'zone': {
+                'timeframe': zone.get('timeframe') or zone.get('zone_timeframe'),
+                'zone_type': zone.get('zone_type'),
+                'low': zone.get('low'),
+                'high': zone.get('high'),
+                'origin_candle_time': zone.get('origin_candle_time') or zone.get('origin_time'),
+                'invalidation_price': zone.get('invalidation_price'),
+                'close_through': zone.get('close_through'),
+            },
+            'confirmations': {
+                'sweep': confirmations.get('sweep'),
+                'rejection': confirmations.get('rejection'),
+                'displacement': confirmations.get('displacement'),
+                'mss': confirmations.get('mss'),
+            },
+            'confirmation_verified': (
+                zone.get('bullish_confirmation_verified')
+                if zone.get('direction') == 'BUY'
+                else zone.get('bearish_confirmation_verified')
+            ),
+            'missing_confirmations': missing,
+            'review_basis': zone.get('review_basis'),
+            'reviewed_m5_start_utc': zone.get('reviewed_m5_start_utc'),
+            'source_interval': zone.get('source_interval'),
+            'source_candle_utc': zone.get('source_candle_utc'),
+            'why_not_entry_ready': zone.get('why_not_entry_ready') or [],
+        })
+    return {'zones': packages}
+
 
 def build_analysis_ingest_payload(record, analysis, safety_gate, m5_diagnostic):
     """Separate analysis usefulness from permission to publish a trade plan."""
@@ -231,6 +279,7 @@ def build_analysis_ingest_payload(record, analysis, safety_gate, m5_diagnostic):
         'fundamentals': record.get('fundamentals', {}),
         'trade_plan': record.get('trade_plan'),
         'market_watch': record.get('market_watch'),
+        'evidence_package': build_evidence_package(record.get('market_watch')),
         'current_price': record.get('current_price'),
         'analysis_status': statuses[0] if complete else 'INVALID',
         'analysis_complete': complete,
@@ -514,8 +563,7 @@ def main():
         record['status'] = 'failed'
         record['error'] = message[:1000]
         save_record(record_path, record)
-        print(f"测试停止于 {record['stage']}: {record['error']}")
-        return 1
+        raise
 
 
 if __name__ == '__main__':
