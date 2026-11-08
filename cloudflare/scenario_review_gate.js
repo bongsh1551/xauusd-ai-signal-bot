@@ -3,10 +3,16 @@ export function reviewAllowsAlert(z, meta) {
   if (!z || typeof z !== 'object' || !meta || z.status !== 'APPROACH' ||
       z.scenario_state !== 'ACTIVE' || typeof z.review_basis !== 'string' ||
       !z.review_basis.trim()) return false;
-  const confirmationKey = z.direction === 'BUY'
-    ? 'bullish_confirmation_verified'
-    : 'bearish_confirmation_verified';
-  if (z[confirmationKey] !== true) return false;
+  const evidence = (meta.evidence_package?.zones || []).find(
+    item => item && item.scenario_id === z.scenario_id
+  );
+  if (!evidence) return false;
+  if (evidence.direction !== z.direction) return false;
+  if (evidence.scenario_state !== 'ACTIVE') return false;
+  if (evidence.status !== 'APPROACH') return false;
+  if (evidence.alert_allowed !== true) return false;
+  if (evidence.confirmation_verified !== true) return false;
+  if (!Array.isArray(evidence.missing_confirmations) || evidence.missing_confirmations.length) return false;
   const charts = meta.charts;
   if (!Array.isArray(charts) || charts.some(c => !c || typeof c !== 'object')) return false;
   const m5 = charts.find(c => c.interval === '5min');
