@@ -1,9 +1,9 @@
 """Zone lifecycle, stable scenario identity, and confluence checks for XAUUSD market_watch.
 
-The model may identify a zone, but it may not decide that an old supply zone
-remains actionable after price has closed through it.  This module enforces a
+The model may identify a zone, but it may not decide that an old supply or demand
+zone remains actionable after price has closed through it.  This module enforces a
 conservative lifecycle and requires technical plus fundamental confluence before
-a SELL zone may be marked APPROACH.
+a SELL or BUY zone may be marked APPROACH.
 """
 from __future__ import annotations
 
@@ -135,7 +135,8 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
     for zone in watch["zones"]:
         if not isinstance(zone, dict):
             continue
-        if zone.get("direction") != "SELL":
+        direction = zone.get("direction")
+        if direction not in ("BUY", "SELL"):
             continue
         scenario_id = _stable_scenario_id(zone)
         if scenario_id:
@@ -160,7 +161,10 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
             changes.append({"action": "WAIT", "reason": "invalid bounds"})
             continue
         low, high = bounds
-        invalidation_price = high + buffer
+        if direction == "SELL":
+            invalidation_price = high + buffer
+        else:
+            invalidation_price = low - buffer
         zone["invalidation_price"] = invalidation_price
         prior_status = zone.get("status")
 
@@ -172,21 +176,29 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
             changes.append({"action": "KEEP_INVALIDATED", "scenario_id": scenario_id})
             continue
 
-        closes_above = sum(1 for close in closes[-2:] if close > invalidation_price)
-        if closes_above >= 2:
+        if direction == "SELL":
+            closes_through = sum(1 for close in closes[-2:] if close > invalidation_price)
+            broken_reason = "ONE_M5_CLOSE_ABOVE_SUPPLY"
+            invalidated_reason = "TWO_M5_CLOSES_ABOVE_SUPPLY"
+        else:
+            closes_through = sum(1 for close in closes[-2:] if close < invalidation_price)
+            broken_reason = "ONE_M5_CLOSE_BELOW_DEMAND"
+            invalidated_reason = "TWO_M5_CLOSES_BELOW_DEMAND"
+
+        if closes_through >= 2:
             zone["status"] = "INVALIDATED"
             zone["close_through"] = True
             zone["alert_allowed"] = False
-            zone["lifecycle_reason"] = "TWO_M5_CLOSES_ABOVE_SUPPLY"
+            zone["lifecycle_reason"] = invalidated_reason
             persisted[scenario_id] = 'INVALIDATED'
             changed = True
             changes.append({"action": "INVALIDATED", "scenario_id": scenario_id})
             continue
-        if closes_above == 1:
+        if closes_through == 1:
             zone["status"] = "BROKEN"
             zone["close_through"] = True
             zone["alert_allowed"] = False
-            zone["lifecycle_reason"] = "ONE_M5_CLOSE_ABOVE_SUPPLY"
+            zone["lifecycle_reason"] = broken_reason
             changes.append({"action": "BROKEN", "scenario_id": scenario_id})
             continue
 
@@ -198,15 +210,32 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
         fundamental = _fundamental_context(watch, zone)
         missing_fundamentals = [key for key, value in fundamental.items() if value in (None, "")]
         currency = fundamental.get("currency_strength")
-        usd_conflict = isinstance(currency, str) and currency.strip().lower() in ("usd_bullish", "usd_strong")
         calendar = fundamental.get("calendar_risk")
         high_impact = isinstance(calendar, str) and calendar.strip().lower() in ("high_impact", "news_window")
 
-        if h1_bias != "bearish":
+        if direction == "SELL":
+            expected_bias = "bearish"
+            confirmation_key = "bearish_confirmation_verified"
+            usd_conflict_values = ("usd_bullish", "usd_strong")
+            usd_conflict_reason = "usd strength conflicts with sell"
+        else:
+            expected_bias = "bullish"
+            confirmation_key = "bullish_confirmation_verified"
+            usd_conflict_values = ("usd_bearish", "usd_weak")
+            usd_conflict_reason = "usd strength conflicts with buy"
+
+        usd_conflict = isinstance(currency, str) and currency.strip().lower() in usd_conflict_values
+
+        if h1_bias != expected_bias:
             zone["status"] = "WAIT"
             zone["alert_allowed"] = False
             zone["lifecycle_reason"] = "H1_BIAS_CONFLICT"
-            changes.append({"action": "WAIT", "reason": "h1 bias not bearish"})
+            changes.append({"action": "WAIT", "reason": f"h1 bias not {expected_bias}"})
+        elif not zone.get(confirmation_key):
+            zone["status"] = "WAIT"
+            zone["alert_allowed"] = False
+            zone["lifecycle_reason"] = "CONFIRMATION_NOT_VERIFIED"
+            changes.append({"action": "WAIT", "reason": f"{confirmation_key} missing"})
         elif missing:
             zone["status"] = "WAIT"
             zone["alert_allowed"] = False
@@ -228,7 +257,7 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
             zone["status"] = "WAIT"
             zone["alert_allowed"] = False
             zone["lifecycle_reason"] = "USD_STRENGTH_CONFLICT"
-            changes.append({"action": "WAIT", "reason": "usd strength conflicts with sell"})
+            changes.append({"action": "WAIT", "reason": usd_conflict_reason})
         else:
             zone["status"] = "APPROACH"
             zone["alert_allowed"] = True
