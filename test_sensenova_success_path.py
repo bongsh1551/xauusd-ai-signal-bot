@@ -19,6 +19,8 @@ class SuccessPathTests(unittest.TestCase):
                      patch.object(runner.requests, 'post') as http, \
                      patch.object(runner.pipeline, 'api_json', return_value=data), \
                      patch.object(runner.zone_lifecycle, 'apply_zone_lifecycle', return_value=(TEXT, {})):
+                    http.return_value.status_code = 200
+                    http.return_value.close.return_value = None
                     response = runner.post('https://generativelanguage.googleapis.com/v1beta/models/test:generateContent',
                         json={'contents': [{'parts': [{'text': 'offline fixture'}]}]})
                     http.assert_called_once()
