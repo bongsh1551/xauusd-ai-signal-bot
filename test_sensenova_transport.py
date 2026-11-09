@@ -71,7 +71,7 @@ class SenseNovaRetryTests(unittest.TestCase):
         inner=requests.Timeout('INNER_SECRET')
         outer=requests.ConnectionError('OUTER_SECRET')
         outer.__cause__=inner
-        s,w,o=self.case([outer])
+        s,w,o=self.case([outer, outer, outer])
         log=io.StringIO()
         with redirect_stdout(log),self.assertRaises(t.SenseNovaRequestFailed):
             t.request_with_retry(s,'endpoint',o,w)
