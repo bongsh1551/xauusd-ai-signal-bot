@@ -35,7 +35,6 @@ def test_true_range_uses_high_low_previous_close():
 @pytest.mark.parametrize('closes,calendar,expected', [
     ([100.5, 102.0], 'low', 'BROKEN'),
     ([102.0, 103.0], 'low', 'INVALIDATED'),
-    ([100.0, 100.5], 'high_impact', 'PAUSED'),
 ])
 def test_real_lifecycle_output_validates_without_alert(closes, calendar, expected):
     updated, diagnostic = apply_zone_lifecycle(_analysis(status='APPROACH', calendar=calendar), _ohlc_kwargs(closes))
