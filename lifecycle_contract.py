@@ -9,7 +9,7 @@ def normalize_lifecycle_contract(text, watch):
     for index, zone in enumerate(watch.get('zones', [])):
         if not isinstance(zone, dict):
             continue
-        state = zone.get('status')
+        state = zone.get('lifecycle_state') if zone.get('lifecycle_state') in BLOCKED else zone.get('status')
         if state in BLOCKED:
             zone['lifecycle_state'] = state
             zone['scenario_state'] = 'INVALIDATED' if state == 'INVALIDATED' else 'PAUSED'
