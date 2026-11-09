@@ -1,7 +1,6 @@
 """Fail closed before Telegram and Cloudflare; journal expected safety blocks."""
 import sys
 import sensenova_runner as runner
-from sensenova_transport import install
 from zone_level_contract import install_zone_levels
 from quality_evidence import install_quality_evidence
 
