@@ -47,21 +47,21 @@ class DailyMemoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             memory.validate_day(self.state, self.now, 'live')
 
-    def test_shadow_mode_can_initialize_and_persist_memory(self):
-        shadow = memory.new_day(self.now, 'shadow')
-        self.assertEqual(shadow['mode'], 'shadow')
+    def test_manual_signals_mode_can_initialize_and_persist_memory(self):
+        manual = memory.new_day(self.now, 'manual_signals')
+        self.assertEqual(manual['mode'], 'manual_signals')
         updated = memory.record_analysis(
-            shadow, self.now, self.now, 'shadow-1',
+            manual, self.now, self.now, 'manual-1',
             'WAIT; bullish structure remains under observation.',
             'SHADOW OPENING CONTEXT', opening=True)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'daily_memory.json'
             memory.save_state(path, updated)
             restored, status = memory.load_state(
-                path, self.now + timedelta(minutes=5), 'shadow')
+                path, self.now + timedelta(minutes=5), 'manual_signals')
         self.assertEqual(status, 'RESTORED')
-        self.assertEqual(restored['latest_analysis']['run_id'], 'shadow-1')
-        self.assertEqual(restored['opening_plan']['run_id'], 'shadow-1')
+        self.assertEqual(restored['latest_analysis']['run_id'], 'manual-1')
+        self.assertEqual(restored['opening_plan']['run_id'], 'manual-1')
 
     def test_plan_continuity_and_fundamentals(self):
         first = self.opening()
