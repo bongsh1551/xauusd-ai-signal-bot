@@ -24,7 +24,7 @@ def error_types(exc):
         names.append(type(item).__name__)
         pending.extend([item.__cause__, item.__context__, getattr(item, 'reason', None)])
         pending.extend(x for x in item.args if isinstance(x, BaseException))
-    return sorted(set(names))
+    return list(dict.fromkeys(names))
 
 def payload_diagnostics(payload):
     size = len(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
