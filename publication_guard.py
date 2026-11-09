@@ -5,7 +5,6 @@ from sensenova_transport import install
 from zone_level_contract import install_zone_levels
 from quality_evidence import install_quality_evidence
 
-_original_upload = runner.pipeline.upload_plan
 _original_save = runner.save_record
 _BLOCK_MESSAGE = 'Safety block: unverified analysis retained in journal; publication skipped'
 _block_pending = False
@@ -30,11 +29,6 @@ def verified_record(record):
                     and c.get('quality_review_required') is False
                     and c.get('quality_verdict') == 'NO_NARROW_RUN_FLAG'
                     for c in charts))
-
-def guarded_upload(config, analysis, record):
-    if not verified_record(record):
-        raise RuntimeError('Publication guard: test/unverified analysis retained in journal; Cloudflare upload blocked')
-    return _original_upload(config, analysis, record)
 
 def guarded_save(path, record):
     global _block_pending, _block_saved
@@ -63,7 +57,6 @@ def main():
     global _block_pending, _block_saved
     _block_pending = False
     _block_saved = False
-    runner.pipeline.upload_plan = guarded_upload
     runner.save_record = guarded_save
     # sensenova_runner owns the SenseNova-only transport and retry policy.
     install_zone_levels(runner)
