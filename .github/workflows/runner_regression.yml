@@ -16,4 +16,4 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements.txt
       - name: Test production post success path without API credentials
-        run: python -m unittest -v test_sensenova_success_path
+        run: python -m unittest -v test_sensenova_success_path test_fundamentals_cache
