@@ -55,7 +55,7 @@ class FxCacheTests(unittest.TestCase):
         self.assertEqual(result['currency_strength']['status'], 'USD_STRONG')
         self.assertEqual(result['currency_strength']['data_source'], 'cache')
 
-    def test_failed_pair_has_15_minute_retry_cooldown_and_success_is_reused(self):
+    def test_failed_pair_respects_retry_cooldown_then_refreshes_both_pairs(self):
         fail_eurusd_once = {'pending': True}
         def fetch(key, symbol, now, folder):
             if symbol == 'EUR/USD' and fail_eurusd_once['pending']:
@@ -78,8 +78,8 @@ class FxCacheTests(unittest.TestCase):
             mocked.reset_mock()
             third = fundamentals.collect_fundamentals(
                 'key', self.now + pd.Timedelta(minutes=16), self.folder)
-            mocked.assert_called_once()
-            self.assertEqual(mocked.call_args.args[1], 'EUR/USD')
+            self.assertEqual(mocked.call_count, 2)
+            self.assertEqual([call.args[1] for call in mocked.call_args_list], ['EUR/USD', 'USD/JPY'])
             self.assertEqual(third['currency_strength']['status'], 'USD_STRONG')
 
     def test_five_minute_run_refreshes_currency_strength(self):
