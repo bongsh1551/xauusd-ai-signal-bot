@@ -7,7 +7,7 @@ import requests
 CALENDAR_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
 FX_CACHE_PATH = Path('.cache/fx_strength.json')
 FX_CACHE_UPDATED = Path('.cache/fx_strength.updated')
-FX_CACHE_MAX_AGE_MINUTES = 70
+FX_CACHE_MAX_AGE_MINUTES = 4
 
 
 def _json(response, service):
@@ -187,10 +187,15 @@ def collect_fundamentals(key, now, folder):
                 json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
     strength = currency_strength(eurusd, usdjpy)
     strength['data_source'] = 'cache' if not attempted_refresh else 'live_api'
+    strength['checked_at_utc'] = now.isoformat()
+    strength['refresh_target_minutes'] = 5
+    strength['refresh_interval_policy'] = 'refresh each scheduled 5-minute analysis run; reuse cache only within 4 minutes'
+    strength['source_data_as_of_utc'] = {'eurusd': eurusd.get('last_closed_utc') if eurusd else None, 'usdjpy': usdjpy.get('last_closed_utc') if usdjpy else None}
     context = build_context(now, calendar, strength, errors)
     (folder / 'market_context.txt').write_text(context, encoding='utf-8')
     return {
         'calendar_events': calendar['events'],
+        'calendar_checked_at_utc': now.isoformat(),
         'calendar_coverage': calendar.get('coverage', 'unavailable'),
         'currency_strength': strength,
         'errors': errors,
