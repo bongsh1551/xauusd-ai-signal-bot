@@ -30,7 +30,7 @@ def _age_seconds(entry, now):
 
 
 def new_day(now, mode):
-    if mode not in ('historical_test', 'manual_signals', 'shadow', 'live'):
+    if mode not in ('historical_test', 'manual_signals', 'live'):
         raise ValueError('Unknown memory mode')
     now = utc_time(now)
     return {
