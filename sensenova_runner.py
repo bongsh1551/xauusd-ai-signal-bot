@@ -9,6 +9,7 @@ import requests
 import main as pipeline
 import run_replay
 import zone_lifecycle
+from sensenova_transport import request_with_retry
 
 MODEL = 'sensenova-6.8-flash-lite'
 ENDPOINT = 'https://token.sensenova.ai/v1/chat/completions'
@@ -113,25 +114,8 @@ def validate_analysis(text):
             raise RuntimeError('SenseNova: invalid trade_plan valid_minutes')
     return status
 
-def gemini_post_with_retry(url, kwargs, max_attempts=4):
-    """Retry only transient Gemini overload/rate-limit/server responses."""
-    retryable = {429, 500, 502, 503, 504}
-    for attempt in range(max_attempts):
-        response = requests.post(url, **kwargs)
-        if response.status_code not in retryable or attempt == max_attempts - 1:
-            return response
-        retry_after = None
-        headers = getattr(response, 'headers', {}) or {}
-        try:
-            retry_after = float(headers.get('Retry-After', ''))
-        except (TypeError, ValueError):
-            pass
-        delay = min(15.0, max(1.0, retry_after if retry_after is not None else 2 ** attempt))
-        print(json.dumps({'event': 'gemini_retry', 'http_status': response.status_code,
-                          'attempt': attempt + 1, 'max_attempts': max_attempts,
-                          'delay_seconds': delay}, sort_keys=True))
-        time.sleep(delay)
-    raise RuntimeError('Gemini fallback: retry loop exhausted')
+def gemini_post_with_retry(*args, **kwargs):
+    raise RuntimeError('Gemini fallback disabled; SenseNova is the only provider')
 
 
 def post(url, **kwargs):
@@ -151,46 +135,12 @@ def post(url, **kwargs):
                 'data:' + image['mime_type'] + ';base64,' + image['data']}})
         else:
             raise RuntimeError('SenseNova: unsupported input part')
-    gemini_key = os.environ.get('GEMINI_API_KEY', '').strip()
-    if gemini_key == 'GEMINI_FALLBACK_DISABLED':
-        gemini_key = ''
     request_body = {'model': MODEL, 'messages': [{'role': 'user', 'content': content}],
                     'temperature': 0.2, 'reasoning_effort': 'low',
                     'max_tokens': 8192, 'stream': False}
-    try:
-        response = requests.post(ENDPOINT,
-            headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
-            json=request_body, timeout=(10, 120))
-    except RuntimeError as exc:
-        if 'SenseNova transport failure' not in str(exc) or not gemini_key:
-            raise
-        print(json.dumps({'event': 'provider_fallback', 'from': 'sensenova',
-                          'to': 'gemini', 'reason': 'transport_failure'}, sort_keys=True))
-        fallback_kwargs = dict(kwargs)
-        fallback_kwargs['headers'] = dict(kwargs.get('headers', {}))
-        fallback_kwargs['headers']['x-goog-api-key'] = gemini_key
-        response = gemini_post_with_retry(url, fallback_kwargs)
-        result = pipeline.api_json(response, 'Gemini fallback', [gemini_key])
-        candidates = result.get('candidates', [])
-        if not candidates:
-            raise RuntimeError('Gemini fallback: no candidates')
-        candidate = candidates[0]
-        parts = candidate.get('content', {}).get('parts', [])
-        fallback_text = '\\n'.join(p.get('text', '') for p in parts
-                                    if isinstance(p, dict) and not p.get('thought')).strip()
-        if candidate.get('finishReason') != 'STOP' or not fallback_text:
-            raise RuntimeError('Gemini fallback: incomplete response')
-        fallback_text, zone_lifecycle_diagnostic = zone_lifecycle.apply_zone_lifecycle(
-            fallback_text, fallback_kwargs)
-        status = validate_analysis(fallback_text)
-        LAST_DIAGNOSTIC = {'provider': 'gemini_fallback',
-                           'model': url.rsplit('/', 1)[-1].split(':', 1)[0],
-                           'fallback_reason': 'sensenova_transport_failure',
-                           'analysis_status': status,
-                           'zone_lifecycle': zone_lifecycle_diagnostic}
-        print(json.dumps({'event': 'provider_fallback_validated',
-                          'provider': 'gemini', 'analysis_status': status}, sort_keys=True))
-        return Response(result)
+    response = request_with_retry(requests, ENDPOINT, {
+        'headers': {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
+        'json': request_body, 'timeout': (10, 120), 'allow_redirects': False})
     result = pipeline.api_json(response, 'SenseNova', [key])
     choices = result.get('choices') if isinstance(result, dict) else None
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
@@ -253,9 +203,7 @@ def main():
     if not key:
         print('Missing SENSENOVA_API_KEY; analysis not started')
         return 1
-    if not os.environ.get('GEMINI_API_KEY', '').strip():
-        os.environ['GEMINI_API_KEY'] = 'GEMINI_FALLBACK_DISABLED'
-    pipeline.MODEL = 'gemini-3.8-flash'
+    pipeline.MODEL = MODEL
     pipeline.requests = SimpleNamespace(get=requests.get, post=post)
     pipeline.save_record = save_record
     return pipeline.main()
