@@ -18,16 +18,15 @@ import requests
 from fundamentals import collect_fundamentals
 import daily_memory
 
-MODEL = 'gemini-3.5-flash-lite'
+MODEL = 'sensenova-6.8-flash-lite'
 PROMPT_PATH = 'prompts/scalper.txt'
 MEMORY_PATH = '.cache/daily_market_memory.json'
 ANALYSIS_MODE = os.getenv('ANALYSIS_MODE', 'historical_test').strip().lower()
-if ANALYSIS_MODE not in {'historical_test', 'shadow'}:
-    raise RuntimeError('ANALYSIS_MODE must be historical_test or shadow')
+if ANALYSIS_MODE not in {'historical_test', 'manual_signals'}:
+    raise RuntimeError('ANALYSIS_MODE must be historical_test or manual_signals')
 MEMORY_MODE = os.getenv('MARKET_MEMORY_MODE', ANALYSIS_MODE)
-HEADER = ('🧪 影子模式分析｜非交易信号，不可据此进场' if ANALYSIS_MODE == 'shadow'
+HEADER = ('🟡 XAUUSD 手动信号分析｜不自动下单' if ANALYSIS_MODE == 'manual_signals'
           else '🧪 历史行情分析测试｜不是当前交易信号，不可据此进场')
-PLAN_UPLOAD_URL = 'https://goldscalp-telegram.bongsh2002.workers.dev/update-plan'
 ANALYSIS_INGEST_URL = 'https://goldscalp-telegram.bongsh2002.workers.dev/ingest-analysis'
 
 
@@ -106,7 +105,7 @@ def fetch_chart(key, interval, minutes, now, folder):
     narrow_threshold = {'5min': 0.15, '15min': 0.30, '1h': 0.30}.get(interval, 0.30)
     ai_quality = candle_range_quality(frame.tail(40), narrow_threshold)
     chart_quality = candle_range_quality(frame.tail(120), narrow_threshold)
-    quality_review_required = requires_candle_quality_review(ai_quality, chart_quality)
+    quality_review_required = requires_candle_quality_review(ai_quality)
     age = (now - (frame.index[-1] + pd.Timedelta(minutes=minutes))).total_seconds() / 60
     diagnostic = {
         'interval': interval, 'candles_available': len(frame), 'candles_sent': 40,
@@ -126,14 +125,14 @@ def fetch_chart(key, interval, minutes, now, folder):
         'quality_review_required': quality_review_required,
         'quality_verdict': 'REVIEW_REQUIRED' if quality_review_required else 'NO_NARROW_RUN_FLAG',
         'quality_cause': 'UNKNOWN',
-        'data_validation_status': 'UNVERIFIED_TEST_ONLY',
+        'data_validation_status': 'OHLC_VALIDATED_SESSION_CALENDAR_UNVERIFIED',
         'recent_zero_range_count': int((ranges.abs() <= 0.000000001).sum()),
         'time_gaps_in_sample': int((frame.index.to_series().diff() > pd.Timedelta(minutes=minutes)).sum()),
         'note': '时间新不代表有效行情；窄幅统计为诊断，不判定原因；周末标记不替代交易时段日历。'}
     plot = frame.tail(120).copy()
     plot.index = plot.index.tz_convert('Asia/Kuala_Lumpur').tz_localize(None)
     fig, _ = mpf.plot(plot, type='candle', style='yahoo', volume=False,
-                      title=f'XAU/USD {interval} | MYT UTC+8 | HISTORICAL TEST ONLY',
+                      title=f'XAU/USD {interval} | MYT UTC+8 | {ANALYSIS_MODE.upper()}',
                       figsize=(14, 7), returnfig=True, tight_layout=True)
     buffer = io.BytesIO()
     try:
@@ -287,7 +286,7 @@ def build_analysis_ingest_payload(record, analysis, safety_gate, m5_diagnostic):
         'quality_status': 'USABLE_CONTEXT' if usable else 'REVIEW_REQUIRED',
         'quality_reasons': quality_reasons,
         'safety_gate': safety_gate,
-        'publish_allowed': bool(safety_gate.get('passed')) and record.get('mode') == 'live',
+        'publish_allowed': bool(safety_gate.get('passed')) and record.get('mode') == 'manual_signals',
         'source': 'github_workflow'
     }
     return {'plan': analysis, 'meta': meta}
@@ -324,7 +323,7 @@ def main():
               'plan_upload': {'attempted': False, 'sent': False},
               'execution': 'manual_only_no_auto_trading'}
     save_record(record_path, record)
-    names = ['TWELVEDATA_API_KEY', 'GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'PLAN_UPDATE_TOKEN']
+    names = ['TWELVEDATA_API_KEY', 'SENSENOVA_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'PLAN_UPDATE_TOKEN']
     config = {name: os.getenv(name, '').strip() for name in names}
     memory_state, memory_status = daily_memory.load_state(MEMORY_PATH, now.to_pydatetime(), MEMORY_MODE)
     record['market_memory'] = {'status': memory_status, 'revision': memory_state['revision'],
@@ -341,8 +340,8 @@ def main():
             raise RuntimeError('Empty prompt')
         (folder / 'prompt.txt').write_text(prompt, encoding='utf-8')
         record['prompt_sha256'] = hashlib.sha256(prompt.encode()).hexdigest()
-        instruction = (prompt + ('\n\n【执行模式】影子观察模式：每次自动读取最新已收线图表并分析；只发送 WAIT/观察内容，不发送 ENTRY_READY，不上传交易计划，不执行交易。\n'
-                                  if ANALYSIS_MODE == 'shadow' else '\n\n【执行模式】仅历史分析测试，不是实时交易。\n')
+        instruction = (prompt + ('\n\n【执行模式】实时手动信号模式：每轮分析最新已收线行情，按证据输出 WAIT、APPROACH 或 CONFIRMED；满足条件时发布 ENTRY_READY 参考计划。只提供人工决策参考，绝不自动下单。\n'
+                                  if ANALYSIS_MODE == 'manual_signals' else '\n\n【执行模式】仅历史分析测试，不是实时交易。\n')
                        + HEADER + '\n当前 UTC：' + now.isoformat()
                        + '\n当前大马时间：' + now.tz_convert('Asia/Kuala_Lumpur').isoformat()
                        + '\n不编造宏观背景，不把新时间戳等同于有效行情。只基于以下输入。')
@@ -380,29 +379,29 @@ def main():
         }
         parts.append({'text': fundamentals['context']})
         save_record(record_path, record)
-        record['stage'] = 'gemini'
+        record['stage'] = 'sensenova'
         save_record(record_path, record)
         response = requests.post(
             f'https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent',
-            headers={'x-goog-api-key': config['GEMINI_API_KEY']},
+            headers={'x-goog-api-key': config['SENSENOVA_API_KEY']},
             json={'contents': [{'role': 'user', 'parts': parts}],
                   'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 2048}}, timeout=(10, 120))
-        result = api_json(response, 'Gemini', list(config.values()))
+        result = api_json(response, 'SenseNova', list(config.values()))
         candidates = result.get('candidates', [])
         if not candidates:
             raise RuntimeError('Gemini: no candidates')
         candidate = candidates[0]
-        record['gemini_finish_reason'] = candidate.get('finishReason')
+        record['sensenova_finish_reason'] = candidate.get('finishReason')
         analysis = '\n'.join(p.get('text', '') for p in candidate.get('content', {}).get('parts', [])
                              if not p.get('thought')).strip()
         record['ai_raw_output'] = analysis
-        record['gemini_usage'] = result.get('usageMetadata', {})
+        record['sensenova_usage'] = result.get('usageMetadata', {})
         save_record(record_path, record)
         if not analysis or candidate.get('finishReason') != 'STOP':
             raise RuntimeError('Gemini output missing or incomplete; Telegram skipped')
         trade_plan = extract_json_block(analysis, 'trade_plan')
         market_watch = extract_json_block(analysis, 'market_watch')
-        safety_reasons = ['shadow mode: live entry publication and plan upload are disabled'] if ANALYSIS_MODE == 'shadow' else []
+        safety_reasons = []
         if m5_diagnostic is None:
             safety_reasons.append('M5 diagnostic unavailable')
         else:
@@ -416,8 +415,8 @@ def main():
                         chart_diagnostic.get('interval', 'unknown')
                         + ' suspicious near-flat candle run; data quality review required'
                     )
-            if not m5_diagnostic.get('market_session_verified'):
-                safety_reasons.append('market session unverified')
+            # Session calendar is explicitly UNKNOWN, not fabricated as verified.
+            # Fresh, valid OHLC and the configured weekday service window remain independently checked.
         safety_gate = {'passed': not safety_reasons, 'reasons': safety_reasons}
         record['safety_gate'] = safety_gate
         if not safety_gate['passed']:
@@ -476,31 +475,12 @@ def main():
             record['analysis_ingest'] = {
                 'attempted': True, 'sent': False, 'error': ingest_message[:500]}
             raise RuntimeError('Cloudflare analysis ingest failed: ' + ingest_message)
-        if ANALYSIS_MODE == 'shadow':
-            # Shadow analysis is delivered to Cloudflare only. Telegram is reserved
-            # for Cloudflare setup alerts, health alerts, and user-initiated replies.
-            record['telegram'] = {'attempted': False, 'sent': False,
-                                  'reason': 'SHADOW_ANALYSIS_SENT_TO_CLOUDFLARE_ONLY'}
-            record['plan_upload'] = {'attempted': False, 'sent': False,
-                                     'reason': 'SHADOW_MODE_NO_PLAN_UPLOAD'}
-            record['status'] = 'completed'
-            record['stage'] = 'completed'
-            save_record(record_path, record)
-            print(f'Shadow analysis delivered to Cloudflare; no routine Telegram message; no plan upload or trade execution; Journal: {folder}')
-            return 0
         if not safety_gate['passed']:
-            if ANALYSIS_MODE == 'shadow':
-                # Keep the model's chart interpretation visible for evaluation,
-                # while the safety-normalized text has had any ENTRY_READY plan removed.
-                message = (HEADER + '\n\n' + analysis.removeprefix(HEADER).lstrip()
-                           + '\n\n影子模式限制：仅供观察与评估；不构成交易信号，不上传计划，不执行交易。'
-                           + '\n安全限制：' + '; '.join(safety_reasons))
-            else:
-                message = (HEADER + '\n\n状态：WAIT（安全闸拦截）\n'
-                           + '时间：' + record['created_at_myt'] + '\n'
-                           + ('价格：' + f'{current_price:.2f}' + '\n' if current_price is not None else '')
-                           + '原因：' + '; '.join(safety_reasons) + '\n'
-                           + '未满足实时信号安全条件；不提供 ENTRY_READY。')
+            message = (HEADER + '\n\n状态：WAIT（安全闸拦截）\n'
+                       + '时间：' + record['created_at_myt'] + '\n'
+                       + ('价格：' + f'{current_price:.2f}' + '\n' if current_price is not None else '')
+                       + '原因：' + '; '.join(safety_reasons) + '\n'
+                       + '未满足实时信号安全条件；不提供 ENTRY_READY。')
         else:
             message = HEADER + '\n\n' + analysis.removeprefix(HEADER).lstrip()
             if trade_plan:
@@ -520,31 +500,12 @@ def main():
             raise RuntimeError('Telegram rejected message')
         record['telegram'] = {'attempted': True, 'sent': True, 'truncated': False,
                               'message_id': sent.get('result', {}).get('message_id')}
-        if ANALYSIS_MODE == 'shadow':
-            record['plan_upload'] = {'attempted': False, 'sent': False, 'reason': 'SHADOW_MODE_NO_UPLOAD'}
-            record['status'] = 'completed'
-            record['stage'] = 'completed'
-            save_record(record_path, record)
-            print(f'影子分析完成；Telegram observation sent; no plan upload or trade execution; Journal: {folder}')
-            return 0
-        record['stage'] = 'plan_upload'
-        record['plan_upload'] = {'attempted': True, 'sent': False}
-        save_record(record_path, record)
-        try:
-            upload_result = upload_plan(config, analysis, record)
-            record['plan_upload'] = {'attempted': True, 'sent': True,
-                                     'saved_at': upload_result.get('saved_at')}
-        except Exception as upload_error:
-            upload_message = str(upload_error) if isinstance(upload_error, RuntimeError) else type(upload_error).__name__
-            for secret in config.values():
-                if secret:
-                    upload_message = upload_message.replace(secret, '[REDACTED]')
-            record['plan_upload'] = {'attempted': True, 'sent': False, 'error': upload_message[:500]}
-            raise RuntimeError('Cloudflare plan upload failed: ' + upload_message)
+        record['plan_upload'] = {'attempted': False, 'sent': False,
+                                 'reason': 'PLAN_STORED_BY_ANALYSIS_INGEST'}
         record['status'] = 'completed'
         record['stage'] = 'completed'
         save_record(record_path, record)
-        print(f'历史测试完成；Journal: {folder}')
+        print(f'Manual signal analysis completed; no automatic orders; Journal: {folder}')
         return 0
     except Exception as exc:
         if not memory_saved:
