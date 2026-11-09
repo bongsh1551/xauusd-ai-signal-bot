@@ -40,31 +40,31 @@ def test_normal_confluence_approach():
     assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
-def test_missing_fundamental_forces_wait():
+def test_missing_fundamental_does_not_block_proximity_warning():
     import re as _re
     text = _analysis()
     text = _re.sub(r'"news_bias": "bearish",|"currency_strength": "neutral",|"calendar_risk": "low",|"fundamental_note": "context available",', '', text)
     updated, diagnostic = apply_zone_lifecycle(text, _kwargs([100.0, 100.5]))
-    assert 'FUNDAMENTAL_CONTEXT_MISSING' in updated
-    assert diagnostic['changes'][0]['action'] == 'WAIT'
+    assert '状态：APPROACH' in updated
+    assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
-def test_usd_conflict_forces_wait():
+def test_usd_conflict_does_not_block_proximity_warning():
     text, diagnostic = apply_zone_lifecycle(_analysis(currency='usd_bullish'), _kwargs([100.0, 100.5]))
-    assert 'USD_STRENGTH_CONFLICT' in text
-    assert diagnostic['changes'][0]['action'] == 'WAIT'
+    assert '状态：APPROACH' in text
+    assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
-def test_high_impact_news_pauses():
+def test_high_impact_news_is_context_not_automatic_block():
     text, diagnostic = apply_zone_lifecycle(_analysis(calendar='high_impact'), _kwargs([100.0, 100.5]))
-    assert 'HIGH_IMPACT_NEWS_WINDOW' in text
-    assert diagnostic['changes'][0]['action'] == 'PAUSED'
+    assert '状态：APPROACH' in text
+    assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
-def test_missing_confirmation_forces_wait():
+def test_missing_confirmation_still_allows_approach_warning():
     text, diagnostic = apply_zone_lifecycle(_analysis(confirmations=False), _kwargs([100.0, 100.5]))
-    assert 'TECHNICAL_CONFIRMATION_MISSING' in text
-    assert diagnostic['changes'][0]['action'] == 'WAIT'
+    assert '状态：APPROACH' in text
+    assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
 def test_buy_normal_confluence_approach():
@@ -74,36 +74,36 @@ def test_buy_normal_confluence_approach():
     assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
-def test_buy_missing_confirmation_forces_wait():
+def test_buy_missing_confirmation_still_allows_approach_warning():
     text, diagnostic = apply_zone_lifecycle(
         _analysis(h1_bias='bullish', direction='BUY', confirmations=False), _kwargs([100.5, 100.0]))
-    assert 'TECHNICAL_CONFIRMATION_MISSING' in text
-    assert diagnostic['changes'][0]['action'] == 'WAIT'
+    assert '状态：APPROACH' in text
+    assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
-def test_buy_h1_bias_conflict_forces_wait():
+def test_buy_h1_bias_conflict_does_not_block_approach_warning():
     text, diagnostic = apply_zone_lifecycle(
         _analysis(h1_bias='bearish', direction='BUY'), _kwargs([100.5, 100.0]))
-    assert 'H1_BIAS_CONFLICT' in text
-    assert diagnostic['changes'][0]['action'] == 'WAIT'
+    assert '状态：APPROACH' in text
+    assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
-def test_buy_usd_conflict_forces_wait():
+def test_buy_usd_conflict_does_not_block_approach_warning():
     text, diagnostic = apply_zone_lifecycle(
         _analysis(h1_bias='bullish', direction='BUY', currency='usd_bearish'), _kwargs([100.5, 100.0]))
-    assert 'USD_STRENGTH_CONFLICT' in text
-    assert diagnostic['changes'][0]['action'] == 'WAIT'
+    assert '状态：APPROACH' in text
+    assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
-def test_buy_high_impact_news_pauses():
+def test_buy_high_impact_news_is_context_not_automatic_block():
     text, diagnostic = apply_zone_lifecycle(
         _analysis(h1_bias='bullish', direction='BUY', calendar='high_impact'), _kwargs([100.5, 100.0]))
-    assert 'HIGH_IMPACT_NEWS_WINDOW' in text
-    assert diagnostic['changes'][0]['action'] == 'PAUSED'
+    assert '状态：APPROACH' in text
+    assert diagnostic['changes'][0]['action'] == 'APPROACH'
 
 
-def test_buy_confirmation_not_verified_forces_wait():
+def test_buy_unverified_confirmation_still_allows_approach_warning():
     text, diagnostic = apply_zone_lifecycle(
         _analysis(h1_bias='bullish', direction='BUY', confirmation_verified=False), _kwargs([100.5, 100.0]))
-    assert 'CONFIRMATION_NOT_VERIFIED' in text
-    assert diagnostic['changes'][0]['action'] == 'WAIT'
+    assert '状态：APPROACH' in text
+    assert diagnostic['changes'][0]['action'] == 'APPROACH'
