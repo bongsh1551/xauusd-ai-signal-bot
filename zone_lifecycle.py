@@ -66,8 +66,8 @@ def _m5_series_from_parts(parts: List[Dict[str, Any]]) -> Tuple[List[float], Lis
 
 def _stable_scenario_id(zone: Dict[str, Any]) -> Optional[str]:
     direction = zone.get("direction")
-    timeframe = zone.get("timeframe") or zone.get("zone_timeframe") or "unspecified"
-    origin = zone.get("origin_candle_time") or zone.get("origin_time")
+    timeframe = zone.get("source_interval") or zone.get("timeframe") or zone.get("zone_timeframe") or "unspecified"
+    origin = zone.get("source_candle_utc") or zone.get("origin_candle_time") or zone.get("origin_time")
     if direction not in ("BUY", "SELL") or not isinstance(origin, str) or not origin.strip():
         return None
     return f"{direction}:{timeframe}:{origin.strip()}"
