@@ -177,31 +177,6 @@ def apply_safety_gate_to_analysis(analysis, trade_plan, market_watch, reasons):
                      blocked, count=1, flags=re.DOTALL)
     return blocked
 
-def upload_plan(config, analysis, record):
-    meta = {
-        'run_id': record['run_id'],
-        'created_at_utc': record['created_at_utc'],
-        'created_at_myt': record['created_at_myt'],
-        'ai_model': MODEL,
-        'code_commit': record.get('code_commit', ''),
-        'charts': record.get('charts', []),
-        'fundamentals': record.get('fundamentals', {}),
-        'trade_plan': record.get('trade_plan'),
-        'market_watch': record.get('market_watch'),
-        'current_price': record.get('current_price'),
-        'source': 'github_workflow'
-    }
-    response = requests.post(
-        PLAN_UPLOAD_URL,
-        headers={'Authorization': 'Bearer ' + config['PLAN_UPDATE_TOKEN'],
-                 'Content-Type': 'application/json'},
-        json={'plan': analysis, 'meta': meta}, timeout=(10, 30))
-    result = api_json(response, 'Cloudflare plan upload', [config['PLAN_UPDATE_TOKEN']])
-    if result.get('ok') is not True:
-        raise RuntimeError('Cloudflare plan upload rejected')
-    return result
-
-
 def build_evidence_package(market_watch):
     """Build a structured, read-only evidence package from lifecycle-validated zones."""
     if not isinstance(market_watch, dict):
