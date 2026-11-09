@@ -87,7 +87,7 @@ class FxCacheTests(unittest.TestCase):
             'EUR/USD': {'cached_at_utc': self.now.isoformat(), 'data': fx_value('EUR/USD')},
             'USD/JPY': {'cached_at_utc': self.now.isoformat(), 'data': fx_value('USD/JPY')},
         }, self.now)
-        with patch.object(fundamentals, 'fetch_calendar', side_effect=self.calendar), \\
+        with patch.object(fundamentals, 'fetch_calendar', side_effect=self.calendar), \
              patch.object(fundamentals, 'fetch_fx', side_effect=lambda key, symbol, now, folder: fx_value(symbol)) as fetch:
             result = fundamentals.collect_fundamentals('key', self.now + pd.Timedelta(minutes=5), self.folder)
         self.assertEqual(fetch.call_count, 2)
