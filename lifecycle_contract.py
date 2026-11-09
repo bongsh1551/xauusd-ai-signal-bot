@@ -18,14 +18,7 @@ def normalize_lifecycle_contract(text, watch):
             blocked.append({'zone_index': index, 'lifecycle_state': state})
         elif state == 'APPROACH':
             approach = True
-    if blocked:
-        # Conservative whole-analysis suppression until per-scenario readiness is unified.
-        for zone in watch.get('zones', []):
-            if isinstance(zone, dict):
-                zone['status'] = 'WAIT'
-                zone['alert_allowed'] = False
-        unified = 'WAIT'
-    elif approach:
+    if approach:
         unified = 'APPROACH'
     else:
         unified = 'WAIT'
