@@ -65,15 +65,15 @@ def request_with_retry(session, url, options, sleep=None):
     diagnostics = payload_diagnostics(options.get('json', {}))
     started = time.monotonic()
     for attempt in range(1, MAX_ATTEMPTS+1):
-        response, retryable, failure = None, False, None
+        response, retryable, failure, error_chain = None, False, None, []
         try:
             response = session.post(url, **options)
         except (requests.exceptions.SSLError, requests.exceptions.ProxyError) as exc:
-            failure = type(exc).__name__
+            failure, error_chain = type(exc).__name__, error_types(exc)
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
-            retryable, failure = True, type(exc).__name__
+            retryable, failure, error_chain = True, type(exc).__name__, error_types(exc)
         except requests.exceptions.RequestException as exc:
-            failure = type(exc).__name__
+            failure, error_chain = type(exc).__name__, error_types(exc)
         if response is not None:
             status = response.status_code
             if 200 <= status < 300:
@@ -89,6 +89,7 @@ def request_with_retry(session, url, options, sleep=None):
         print(json.dumps(dict(event='sensenova_request_error', attempt=attempt,
             max_attempts=MAX_ATTEMPTS, failure=failure, will_retry=will_retry,
             delay_seconds=RETRY_SECONDS if will_retry else 0,
+            error_chain=error_chain,
             elapsed_ms=round((time.monotonic()-started)*1000, 1), **diagnostics), sort_keys=True))
         if not will_retry:
             raise SenseNovaRequestFailed('SenseNova request failed: '+str(failure)
