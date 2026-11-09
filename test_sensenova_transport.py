@@ -67,6 +67,17 @@ class SenseNovaRetryTests(unittest.TestCase):
         result=t.payload_diagnostics(o['json'])
         self.assertEqual(result['image_count'],1)
         self.assertEqual(result['image_base64_chars'],4)
+    def test_nested_error_chain_is_logged_without_messages(self):
+        inner=requests.Timeout('INNER_SECRET')
+        outer=requests.ConnectionError('OUTER_SECRET')
+        outer.__cause__=inner
+        s,w,o=self.case([outer])
+        log=io.StringIO()
+        with redirect_stdout(log),self.assertRaises(t.SenseNovaRequestFailed):
+            t.request_with_retry(s,'endpoint',o,w)
+        line=json.loads(log.getvalue().strip().splitlines()[0])
+        self.assertEqual(line['error_chain'],['ConnectionError','Timeout'])
+        self.assertNotIn('SECRET',log.getvalue())
     def test_install_disables_gemini_and_nested_retries(self):
         runner=SimpleNamespace(ENDPOINT='https://token.sensenova.ai/v1/chat/completions')
         with patch.object(t.requests,'Session') as factory,patch.object(t.requests,'post') as network:
