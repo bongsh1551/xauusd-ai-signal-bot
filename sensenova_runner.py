@@ -205,7 +205,19 @@ def main():
         return 1
     pipeline.MODEL = MODEL
     pipeline.requests = SimpleNamespace(get=requests.get, post=post)
-    pipeline.save_record = save_record
+    previous_save = pipeline.save_record
+    def enriched_save(path, record):
+        if record.get('stage') == 'gemini':
+            record['stage'] = 'sensenova'
+        record['ai_provider'] = 'sensenova'
+        record['ai_model'] = MODEL
+        if LAST_DIAGNOSTIC:
+            record['provider_diagnostic'] = LAST_DIAGNOSTIC.copy()
+            record['sensenova_usage'] = LAST_DIAGNOSTIC.get('usage', {})
+            record['sensenova_finish_reason'] = LAST_DIAGNOSTIC.get('finish_reason')
+        previous_save(path, record)
+        run_replay.update_replay(record, path.parent)
+    pipeline.save_record = enriched_save
     return pipeline.main()
 
 if __name__ == '__main__':
