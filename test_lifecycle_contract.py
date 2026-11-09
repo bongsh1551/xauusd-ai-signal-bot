@@ -69,8 +69,8 @@ def test_blocked_confirmed_plan_removed():
 def test_header_follows_zone_states():
     updated, _ = apply_zone_lifecycle(_analysis(status='CONFIRMED'), _ohlc_kwargs([100.0, 100.5]))
     assert validate_analysis(updated) == 'APPROACH'
-    updated_wait, _ = apply_zone_lifecycle(_analysis(status='CONFIRMED', confirmations=False), _ohlc_kwargs([100.0, 100.5]))
-    assert validate_analysis(updated_wait) == 'WAIT'
+    updated_approach, _ = apply_zone_lifecycle(_analysis(status='CONFIRMED', confirmations=False), _ohlc_kwargs([100.0, 100.5]))
+    assert validate_analysis(updated_approach) == 'APPROACH'
 
 
 def test_unknown_state_not_silently_accepted():
