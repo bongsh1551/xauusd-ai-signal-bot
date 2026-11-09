@@ -1,9 +1,7 @@
-"""Zone lifecycle, stable scenario identity, and confluence checks for XAUUSD market_watch.
+"""Zone lifecycle and proximity alerts for human-reviewed XAUUSD setups.
 
-The model may identify a zone, but it may not decide that an old supply or demand
-zone remains actionable after price has closed through it.  This module enforces a
-conservative lifecycle and requires technical plus fundamental confluence before
-a SELL or BUY zone may be marked APPROACH.
+APPROACH is an early zone-proximity warning, not an entry confirmation. M5
+confirmation and the separate entry review gate remain required for ENTRY_READY.
 """
 from __future__ import annotations
 
@@ -203,66 +201,25 @@ def apply_zone_lifecycle(text: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[s
             continue
 
         zone["close_through"] = False
-        h1_bias = zone.get("h1_bias") or watch.get("h1_bias")
-        confirmations = zone.get("confirmations") or {}
-        required = ("sweep", "rejection", "displacement", "mss")
-        missing = [key for key in required if not confirmations.get(key)]
-        fundamental = _fundamental_context(watch, zone)
-        missing_fundamentals = [key for key, value in fundamental.items() if value in (None, "")]
-        currency = fundamental.get("currency_strength")
-        calendar = fundamental.get("calendar_risk")
-        high_impact = isinstance(calendar, str) and calendar.strip().lower() in ("high_impact", "news_window")
-
-        if direction == "SELL":
-            expected_bias = "bearish"
-            confirmation_key = "bearish_confirmation_verified"
-            usd_conflict_values = ("usd_bullish", "usd_strong")
-            usd_conflict_reason = "usd strength conflicts with sell"
-        else:
-            expected_bias = "bullish"
-            confirmation_key = "bullish_confirmation_verified"
-            usd_conflict_values = ("usd_bearish", "usd_weak")
-            usd_conflict_reason = "usd strength conflicts with buy"
-
-        usd_conflict = isinstance(currency, str) and currency.strip().lower() in usd_conflict_values
-
-        if h1_bias != expected_bias:
-            zone["status"] = "WAIT"
-            zone["alert_allowed"] = False
-            zone["lifecycle_reason"] = "H1_BIAS_CONFLICT"
-            changes.append({"action": "WAIT", "reason": f"h1 bias not {expected_bias}"})
-        elif not zone.get(confirmation_key):
-            zone["status"] = "WAIT"
-            zone["alert_allowed"] = False
-            zone["lifecycle_reason"] = "CONFIRMATION_NOT_VERIFIED"
-            changes.append({"action": "WAIT", "reason": f"{confirmation_key} missing"})
-        elif missing:
-            zone["status"] = "WAIT"
-            zone["alert_allowed"] = False
-            zone["missing_confirmations"] = missing
-            zone["lifecycle_reason"] = "TECHNICAL_CONFIRMATION_MISSING"
-            changes.append({"action": "WAIT", "reason": "missing technical confirmations"})
-        elif missing_fundamentals:
-            zone["status"] = "WAIT"
-            zone["alert_allowed"] = False
-            zone["missing_fundamentals"] = missing_fundamentals
-            zone["lifecycle_reason"] = "FUNDAMENTAL_CONTEXT_MISSING"
-            changes.append({"action": "WAIT", "reason": "missing fundamental context"})
-        elif high_impact:
-            zone["status"] = "PAUSED"
-            zone["alert_allowed"] = False
-            zone["lifecycle_reason"] = "HIGH_IMPACT_NEWS_WINDOW"
-            changes.append({"action": "PAUSED", "reason": "high impact news window"})
-        elif usd_conflict:
-            zone["status"] = "WAIT"
-            zone["alert_allowed"] = False
-            zone["lifecycle_reason"] = "USD_STRENGTH_CONFLICT"
-            changes.append({"action": "WAIT", "reason": usd_conflict_reason})
-        else:
+        # APPROACH is a proximity heads-up only. Do not require the entry
+        # confirmation stack or complete fundamental fields before warning.
+        # The separate scenario review gate still controls ENTRY_READY.
+        distance = max(buffer, 0.50)
+        near_zone = (low - distance) <= latest_close <= (high + distance)
+        if near_zone:
             zone["status"] = "APPROACH"
             zone["alert_allowed"] = True
-            zone["lifecycle_reason"] = "CONFLUENCE_VERIFIED"
+            zone["lifecycle_reason"] = "PRICE_APPROACHING_VALID_ZONE"
+            zone["distance_to_zone"] = round(max(low-latest_close, latest_close-high, 0.0), 3)
+            zone["missing_confirmations"] = [key for key in ("sweep", "rejection", "displacement", "mss")
+                                             if not (zone.get("confirmations") or {}).get(key)]
             changes.append({"action": "APPROACH", "scenario_id": scenario_id})
+        else:
+            zone["status"] = "WAIT"
+            zone["alert_allowed"] = False
+            zone["lifecycle_reason"] = "PRICE_NOT_NEAR_ZONE"
+            zone["distance_to_zone"] = round(max(low-latest_close, latest_close-high, 0.0), 3)
+            changes.append({"action": "WAIT", "reason": "price not near zone"})
 
     if changed:
         _save_invalidated(persisted)
