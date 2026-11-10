@@ -54,16 +54,30 @@ def save_record(path, record):
 
 
 def api_json(response, service, secrets):
+    # Twelve Data exposes quota diagnostics in response headers.
+    # Log only numeric quota metadata; never log request URLs or API keys.
+    quota_used = response.headers.get('api-credits-used', 'unknown')
+    quota_left = response.headers.get('api-credits-left', 'unknown')
+    retry_after = response.headers.get('Retry-After', 'unknown')
+    if 'Twelve Data' in service:
+        print(f'{service} quota: credits_used={quota_used}, credits_left={quota_left}')
     if response.status_code != 200:
         try:
-            error = response.json().get('error', {})
+            payload = response.json()
+            error = payload.get('error', {})
             message = error.get('message', '') if isinstance(error, dict) else ''
+            code = error.get('code', '') if isinstance(error, dict) else ''
         except ValueError:
             message = ''
+            code = ''
         for secret in secrets:
             if secret:
                 message = message.replace(secret, '[REDACTED]')
-        raise RuntimeError(f'{service} HTTP {response.status_code}: {message[:600]}')
+        raise RuntimeError(
+            f'{service} HTTP {response.status_code}: {message[:400]} '
+            f'(error_code={code or "unknown"}, credits_used={quota_used}, '
+            f'credits_left={quota_left}, retry_after={retry_after})'
+        )
     return response.json()
 
 
