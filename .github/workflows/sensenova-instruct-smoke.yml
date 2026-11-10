@@ -43,8 +43,11 @@ jobs:
       - name: Install production dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Run existing regression tests
-        run: python -m unittest -v test_daily_memory test_analysis_ingest test_sensenova_transport
+      - name: Install full test runner
+        run: python -m pip install pytest
+
+      - name: Run complete repository regression suite
+        run: python -m pytest -q
 
       - name: Validate full production prompt, live charts and market context (no publication)
         env:
