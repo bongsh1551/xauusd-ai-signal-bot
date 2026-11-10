@@ -6,6 +6,7 @@ on:
       - experiment/sensenova-full-payload-validation
     paths:
       - .github/workflows/full-pipeline-dry-run.yml
+      - publication_guard.py
       - test_full_pipeline_dry_run.py
   workflow_dispatch:
 
@@ -59,24 +60,7 @@ jobs:
           TELEGRAM_CHAT_ID: DRY_RUN_NOT_A_REAL_CHAT
           PLAN_UPDATE_TOKEN: DRY_RUN_NOT_A_REAL_TOKEN
         run: python -u test_full_pipeline_dry_run.py
-      - name: Save zone lifecycle state
-        if: always() && hashFiles('.cache/zone_lifecycle_state.json') != ''
-        uses: actions/cache/save@v4
-        with:
-          path: .cache/zone_lifecycle_state.json
-          key: zone-lifecycle-${{ github.run_id }}
-      - name: Save 24-hour market memory
-        if: always() && hashFiles('.cache/daily_market_memory.json') != ''
-        uses: actions/cache/save@v4
-        with:
-          path: .cache/daily_market_memory.json
-          key: daily-market-memory-${{ github.run_id }}
-      - name: Save refreshed hourly FX cache
-        if: always() && hashFiles('.cache/fx_strength.updated') != ''
-        uses: actions/cache/save@v4
-        with:
-          path: .cache/fx_strength.json
-          key: fx-strength-${{ github.run_id }}
+      # Deliberately do not save caches: this dry-run must not mutate shared market state.
       - name: Upload dry-run journal and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
