@@ -49,7 +49,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Test analysis pipeline
-        run: python -m unittest -v test_daily_memory test_analysis_ingest test_sensenova_transport
+        run: python -m unittest -v test_daily_memory test_analysis_ingest test_sensenova_transport test_twelvedata_retry
 
       - name: Verify chart imports
         run: python -c "import six; import mplfinance; import sensenova_runner"
