@@ -1,0 +1,1 @@
+Isolated Groq PNG vs WEBP validation. Uses identical market inputs and prompt. Publication, Cloudflare ingest, Telegram delivery, and order execution are disabled.
