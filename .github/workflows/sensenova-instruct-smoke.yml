@@ -12,6 +12,7 @@ on:
       - 'fundamentals.py'
       - 'daily_memory.py'
       - 'zone_lifecycle.py'
+      - 'test_*.py'
       - 'lifecycle_contract.py'
       - '.github/workflows/sensenova-instruct-smoke.yml'
   workflow_dispatch:
