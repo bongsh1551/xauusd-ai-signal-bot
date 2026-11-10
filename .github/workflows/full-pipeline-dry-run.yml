@@ -1,0 +1,91 @@
+name: XAUUSD Full Production Pipeline Dry Run
+
+on:
+  push:
+    branches:
+      - experiment/sensenova-full-payload-validation
+    paths:
+      - .github/workflows/full-pipeline-dry-run.yml
+      - test_full_pipeline_dry_run.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-pipeline-dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: experiment/sensenova-full-payload-validation
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Restore hourly FX cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/fx_strength.json
+          key: fx-strength-${{ github.run_id }}
+          restore-keys: |
+            fx-strength-
+      - name: Restore zone lifecycle state
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/zone_lifecycle_state.json
+          key: zone-lifecycle-${{ github.run_id }}
+          restore-keys: |
+            zone-lifecycle-
+      - name: Restore 24-hour market memory
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/daily_market_memory.json
+          key: daily-market-memory-${{ github.run_id }}
+          restore-keys: |
+            daily-market-memory-
+      - name: Install project dependencies
+        run: pip install -r requirements.txt
+      - name: Run production tests
+        run: python -m unittest -v test_daily_memory test_analysis_ingest test_sensenova_transport
+      - name: Run full production pipeline in dry-run mode
+        env:
+          ANALYSIS_MODE: manual_signals
+          MARKET_MEMORY_MODE: manual_signals
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
+          # Non-empty placeholders satisfy config validation only. No Telegram or plan-upload call is made.
+          TELEGRAM_BOT_TOKEN: DRY_RUN_NOT_A_REAL_TOKEN
+          TELEGRAM_CHAT_ID: DRY_RUN_NOT_A_REAL_CHAT
+          PLAN_UPDATE_TOKEN: DRY_RUN_NOT_A_REAL_TOKEN
+        run: python -u test_full_pipeline_dry_run.py
+      - name: Save zone lifecycle state
+        if: always() && hashFiles('.cache/zone_lifecycle_state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/zone_lifecycle_state.json
+          key: zone-lifecycle-${{ github.run_id }}
+      - name: Save 24-hour market memory
+        if: always() && hashFiles('.cache/daily_market_memory.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/daily_market_memory.json
+          key: daily-market-memory-${{ github.run_id }}
+      - name: Save refreshed hourly FX cache
+        if: always() && hashFiles('.cache/fx_strength.updated') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/fx_strength.json
+          key: fx-strength-${{ github.run_id }}
+      - name: Upload dry-run journal and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xauusd-full-pipeline-dry-run-${{ github.run_id }}
+          path: |
+            journal/
+            .cache/run_replay/
+            .cache/zone_lifecycle_state.json
+            .cache/daily_market_memory.json
+          if-no-files-found: ignore
+          retention-days: 14
