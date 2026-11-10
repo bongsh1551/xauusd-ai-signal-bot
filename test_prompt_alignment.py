@@ -26,7 +26,7 @@ def test_github_prompt_contains_core_rules():
 def test_cloudflare_prompt_contains_core_rules():
     prompt = read("cloudflare/chat_prompt.md")
     rules = [
-        "verified structured evidence",
+        "latest verified structured report",
         "do not create, upgrade, or downgrade market status on your own",
         "do not turn `wait` into `approach` or `entry_ready`",
         "do not invent", "stale",
