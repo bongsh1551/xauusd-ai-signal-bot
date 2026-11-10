@@ -1,0 +1,35 @@
+name: SenseNova Instruct Profile Smoke Test
+
+on:
+  push:
+    branches:
+      - experiment/sensenova-instruct-profile
+    paths:
+      - 'sensenova_runner.py'
+      - 'tests/sensenova_instruct_smoke_test.py'
+      - '.github/workflows/sensenova-instruct-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sensenova-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install HTTP dependency
+        run: python -m pip install requests
+
+      - name: Test SenseNova Instruct response (no publication)
+        env:
+          SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
+        run: python tests/sensenova_instruct_smoke_test.py
