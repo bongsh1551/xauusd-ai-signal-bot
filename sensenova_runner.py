@@ -136,8 +136,8 @@ def post(url, **kwargs):
         else:
             raise RuntimeError('SenseNova: unsupported input part')
     request_body = {'model': MODEL, 'messages': [{'role': 'user', 'content': content}],
-                    'temperature': 0.2, 'reasoning_effort': 'low',
-                    'max_tokens': 8192, 'stream': False}
+                    'temperature': 0.2,
+                    'max_tokens': 16384, 'stream': False}
     response = request_with_retry(requests, ENDPOINT, {
         'headers': {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
         'json': request_body, 'timeout': (10, 120), 'allow_redirects': False})
@@ -161,7 +161,7 @@ def post(url, **kwargs):
     if isinstance(details, dict) and type(details.get('reasoning_tokens')) in (int, float):
         numeric_usage['completion_reasoning_tokens'] = details['reasoning_tokens']
     LAST_DIAGNOSTIC = {'provider': 'sensenova', 'model': MODEL,
-        'requested_reasoning_effort': 'low', 'requested_max_tokens': 8192,
+        'requested_max_tokens': 16384,
         'finish_reason': finish if finish in ('stop', 'length', 'content_filter', 'tool_calls', 'function_call', None) else 'UNRECOGNIZED',
         'content_type': type(value).__name__,
         'content_length': len(value) if isinstance(value, (str, list)) else 0,
