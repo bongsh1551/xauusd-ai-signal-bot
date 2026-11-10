@@ -4,6 +4,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from twelvedata_client import get as twelvedata_get
+
 CALENDAR_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
 FX_CACHE_PATH = Path('.cache/fx_strength.json')
 FX_CACHE_UPDATED = Path('.cache/fx_strength.updated')
@@ -64,7 +66,7 @@ def fetch_calendar(now, folder):
 
 
 def fetch_fx(key, symbol, now, folder):
-    response = requests.get(
+    response = twelvedata_get(
         'https://api.twelvedata.com/time_series',
         params={'symbol': symbol, 'interval': '1h', 'outputsize': 10,
                 'timezone': 'UTC', 'apikey': key}, timeout=(10, 30))
