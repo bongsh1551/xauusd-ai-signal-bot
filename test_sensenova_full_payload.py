@@ -1,4 +1,5 @@
 import base64, json, os, time, hashlib, tempfile
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from pathlib import Path
 import pandas as pd, requests, matplotlib
 matplotlib.use("Agg")
