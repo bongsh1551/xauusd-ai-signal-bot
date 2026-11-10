@@ -1,0 +1,38 @@
+name: SenseNova PNG vs WEBP Token A-B
+
+on:
+  push:
+    branches:
+      - experiment/webp-token-ab
+    paths:
+      - "main.py"
+      - "sensenova_runner.py"
+      - "sensenova_transport.py"
+      - "tests/sensenova_full_input_validation.py"
+      - "requirements.txt"
+      - ".github/workflows/webp-sensenova-ab.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-image-ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+      SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
+      SENSENOVA_API_PROFILE: instruct
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run identical-input PNG vs WEBP SenseNova test
+        run: python tests/sensenova_full_input_validation.py
