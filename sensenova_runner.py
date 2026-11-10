@@ -135,9 +135,23 @@ def post(url, **kwargs):
                 'data:' + image['mime_type'] + ';base64,' + image['data']}})
         else:
             raise RuntimeError('SenseNova: unsupported input part')
+    # Experimental profile based on SenseNova 6.8's documented
+    # Instruct (non-thinking) reasoning-task sampling recommendations.
+    # This branch is isolated from main; validate with live API responses
+    # before considering any production rollout.
+    profile = os.environ.get('SENSENOVA_API_PROFILE', 'instruct').strip().lower()
+    if profile == 'instruct':
+        sampling = {'temperature': 1.0, 'top_p': 1.0, 'top_k': 40,
+                    'min_p': 0.0, 'presence_penalty': 2.0,
+                    'repetition_penalty': 1.0}
+    elif profile == 'thinking':
+        sampling = {'temperature': 1.0, 'top_p': 0.95, 'top_k': 20,
+                    'min_p': 0.0, 'presence_penalty': 1.5,
+                    'repetition_penalty': 1.0}
+    else:
+        raise RuntimeError('Unsupported SENSENOVA_API_PROFILE: ' + profile)
     request_body = {'model': MODEL, 'messages': [{'role': 'user', 'content': content}],
-                    'temperature': 0.2, 'reasoning_effort': 'low',
-                    'max_tokens': 8192, 'stream': False}
+                    **sampling, 'max_tokens': 8192, 'stream': False}
     response = request_with_retry(requests, ENDPOINT, {
         'headers': {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
         'json': request_body, 'timeout': (10, 120), 'allow_redirects': False})
@@ -161,7 +175,7 @@ def post(url, **kwargs):
     if isinstance(details, dict) and type(details.get('reasoning_tokens')) in (int, float):
         numeric_usage['completion_reasoning_tokens'] = details['reasoning_tokens']
     LAST_DIAGNOSTIC = {'provider': 'sensenova', 'model': MODEL,
-        'requested_reasoning_effort': 'low', 'requested_max_tokens': 8192,
+        'requested_profile': profile, 'sampling_parameters': sampling, 'requested_max_tokens': 8192,
         'finish_reason': finish if finish in ('stop', 'length', 'content_filter', 'tool_calls', 'function_call', None) else 'UNRECOGNIZED',
         'content_type': type(value).__name__,
         'content_length': len(value) if isinstance(value, (str, list)) else 0,
