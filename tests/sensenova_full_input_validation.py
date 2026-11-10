@@ -187,6 +187,8 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:
+        import traceback
         print("RESULT=FAIL_FULL_INPUT_VALIDATION")
         print("ERROR=" + (str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__)[:700])
+        traceback.print_exc()
         sys.exit(1)
