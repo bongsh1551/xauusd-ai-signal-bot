@@ -7,7 +7,7 @@ import requests
 CALENDAR_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
 FX_CACHE_PATH = Path('.cache/fx_strength.json')
 FX_CACHE_UPDATED = Path('.cache/fx_strength.updated')
-FX_CACHE_MAX_AGE_MINUTES = 4
+FX_CACHE_MAX_AGE_MINUTES = 60
 
 
 def _json(response, service):
