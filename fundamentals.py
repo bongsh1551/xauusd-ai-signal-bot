@@ -65,11 +65,11 @@ def fetch_calendar(now, folder):
                 'requested_horizon_end_utc': (now + pd.Timedelta(hours=24)).isoformat()}
 
 
-def fetch_fx(key, symbol, now, folder):
+def fetch_fx(api_keys, symbol, now, folder):
     response = twelvedata_get(
         'https://api.twelvedata.com/time_series',
         params={'symbol': symbol, 'interval': '1h', 'outputsize': 10,
-                'timezone': 'UTC', 'apikey': key}, timeout=(10, 30))
+                'timezone': 'UTC'}, timeout=(10, 30), api_keys=api_keys)
     data = _json(response, f'Twelve Data {symbol}')
     if data.get('status') != 'ok' or not data.get('values'):
         raise RuntimeError(f'{symbol}: data rejected')
@@ -144,7 +144,7 @@ def save_fx_cache(symbols, now, retry_after=None):
     FX_CACHE_UPDATED.write_text(now.isoformat(), encoding='utf-8')
 
 
-def collect_fundamentals(key, now, folder):
+def collect_fundamentals(api_keys, now, folder):
     calendar = fetch_calendar(now, folder)
     errors = {}
     FX_CACHE_UPDATED.unlink(missing_ok=True)
@@ -169,7 +169,7 @@ def collect_fundamentals(key, now, folder):
 
         attempted_refresh = True
         try:
-            value = fetch_fx(key, symbol, now, folder)
+            value = fetch_fx(api_keys, symbol, now, folder)
             values[symbol] = value
             cache_symbols[symbol] = {'cached_at_utc': now.isoformat(), 'data': value}
         except Exception as exc:
