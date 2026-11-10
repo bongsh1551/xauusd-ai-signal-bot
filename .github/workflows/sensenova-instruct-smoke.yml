@@ -7,6 +7,12 @@ on:
     paths:
       - 'sensenova_runner.py'
       - 'tests/sensenova_instruct_smoke_test.py'
+      - 'tests/sensenova_full_input_validation.py'
+      - 'main.py'
+      - 'fundamentals.py'
+      - 'daily_memory.py'
+      - 'zone_lifecycle.py'
+      - 'lifecycle_contract.py'
       - '.github/workflows/sensenova-instruct-smoke.yml'
   workflow_dispatch:
 
@@ -26,10 +32,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install HTTP dependency
-        run: python -m pip install requests
+      - name: Restore 24-hour market memory
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/daily_market_memory.json
+          key: daily-market-memory-${{ github.run_id }}
+          restore-keys: |
+            daily-market-memory-
 
-      - name: Test SenseNova Instruct response (no publication)
+      - name: Install production dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run existing regression tests
+        run: python -m unittest -v test_daily_memory test_analysis_ingest test_sensenova_transport
+
+      - name: Validate full production prompt, live charts and market context (no publication)
         env:
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
-        run: python tests/sensenova_instruct_smoke_test.py
+        run: python tests/sensenova_full_input_validation.py
