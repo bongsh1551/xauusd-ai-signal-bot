@@ -57,6 +57,9 @@ def main():
     _block_pending = False
     _block_saved = False
     runner.save_record = guarded_save
+    # Patch the actual persistence hook used by pipeline.main(). runner.main()
+    # wraps this hook, so the guard remains in the production save path.
+    runner.pipeline.save_record = guarded_save
     # sensenova_runner owns the SenseNova-only transport and retry policy.
     install_zone_levels(runner)
     install_quality_evidence(runner.pipeline)
