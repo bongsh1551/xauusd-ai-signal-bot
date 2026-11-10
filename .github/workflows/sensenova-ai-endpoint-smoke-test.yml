@@ -1,0 +1,99 @@
+name: SenseNova .ai Endpoint Smoke Test
+
+on:
+  push:
+    branches:
+      - experiment/sensenova-ai-endpoint-smoke-test
+    paths:
+      - .github/workflows/sensenova-ai-endpoint-smoke-test.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  endpoint-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check SenseNova .ai endpoint
+        env:
+          SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import requests
+
+          endpoint = "https://token.sensenova.ai/v1/chat/completions"
+          key = os.environ.get("SENSENOVA_API_KEY", "").strip()
+          if not key:
+              raise SystemExit("FAIL: SENSENOVA_API_KEY secret is missing")
+
+          payload = {
+              "model": "sensenova-6.8-flash-lite",
+              "messages": [{"role": "user", "content": "Reply with exactly: SENSENOVA_OK"}],
+              "temperature": 0,
+              "reasoning_effort": "low",
+              "max_tokens": 128,
+              "stream": False
+          }
+          headers = {
+              "Authorization": "Bearer " + key,
+              "Content-Type": "application/json"
+          }
+
+          started = time.monotonic()
+          last_error = None
+          for attempt in range(1, 4):
+              try:
+                  response = requests.post(
+                      endpoint, headers=headers, json=payload,
+                      timeout=(10, 120), allow_redirects=False
+                  )
+                  elapsed = round(time.monotonic() - started, 2)
+                  print(json.dumps({
+                      "attempt": attempt,
+                      "http_status": response.status_code,
+                      "elapsed_seconds_total": elapsed,
+                      "endpoint_host": "token.sensenova.ai",
+                      "model": payload["model"],
+                      "response_request_id": response.headers.get("x-request-id") or response.headers.get("request-id")
+                  }, ensure_ascii=False))
+                  if response.status_code != 200:
+                      # Print a short, sanitized provider error body; never print request headers or API key.
+                      try:
+                          body = response.json()
+                      except ValueError:
+                          body = {"body": response.text[:1000]}
+                      print("Provider error: " + json.dumps(body, ensure_ascii=False)[:1500])
+                      if response.status_code < 500:
+                          raise SystemExit("FAIL: non-retryable HTTP response")
+                      last_error = RuntimeError("HTTP " + str(response.status_code))
+                      if attempt < 3:
+                          time.sleep(attempt * 3)
+                          continue
+                      raise SystemExit("FAIL: provider 5xx after retries")
+                  data = response.json()
+                  choices = data.get("choices") or []
+                  if not choices:
+                      raise SystemExit("FAIL: HTTP 200 but no choices returned")
+                  usage = data.get("usage") or {}
+                  print(json.dumps({
+                      "result": "PASS",
+                      "finish_reason": choices[0].get("finish_reason"),
+                      "usage": {k: usage[k] for k in ("prompt_tokens", "completion_tokens", "total_tokens") if k in usage}
+                  }, ensure_ascii=False))
+                  break
+              except requests.RequestException as exc:
+                  last_error = exc
+                  print(json.dumps({
+                      "attempt": attempt,
+                      "transport_error": type(exc).__name__,
+                      "elapsed_seconds_total": round(time.monotonic() - started, 2)
+                  }, ensure_ascii=False))
+                  if attempt == 3:
+                      raise SystemExit("FAIL: transport error after 3 attempts")
+                  time.sleep(attempt * 3)
+          PY
