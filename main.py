@@ -131,12 +131,18 @@ def fetch_chart(key, interval, minutes, now, folder):
         'note': '时间新不代表有效行情；窄幅统计为诊断，不判定原因；周末标记不替代交易时段日历。'}
     plot = frame.tail(120).copy()
     plot.index = plot.index.tz_convert('Asia/Kuala_Lumpur').tz_localize(None)
+    # High-detail chart rendering: preserve candle bodies, wicks and swing structure.
+    # Groq Qwen3.8 charges a fixed 2,048 image tokens per image, so do not
+    # downscale or use lossy compression merely to reduce file size.
     fig, _ = mpf.plot(plot, type='candle', style='yahoo', volume=False,
                       title=f'XAU/USD {interval} | MYT UTC+8 | {ANALYSIS_MODE.upper()}',
-                      figsize=(14, 7), returnfig=True, tight_layout=True)
+                      figsize=(18, 9), returnfig=True, tight_layout=True,
+                      update_width_config={'candle_width': 0.72,
+                                           'wick_linewidth': 1.25,
+                                           'ohlc_linewidth': 1.25})
     buffer = io.BytesIO()
     try:
-        fig.savefig(buffer, format='png', dpi=130, bbox_inches='tight')
+        fig.savefig(buffer, format='png', dpi=160, bbox_inches='tight')
     finally:
         plt.close(fig)
     image = buffer.getvalue()
