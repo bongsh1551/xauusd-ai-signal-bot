@@ -50,6 +50,11 @@ jobs:
       - name: Run complete repository regression suite
         run: python -m pytest -q
 
+      - name: Check SenseNova availability with a small synthetic prompt (no publication)
+        env:
+          SENSENOVA_API_KEY: ${{ secrets.SENSENOVA_API_KEY }}
+        run: python tests/sensenova_instruct_smoke_test.py
+
       - name: Validate full production prompt, live charts and market context (no publication)
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
