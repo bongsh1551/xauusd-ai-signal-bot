@@ -82,12 +82,12 @@ def api_json(response, service, secrets):
     return response.json()
 
 
-def fetch_chart(key, interval, minutes, now, folder):
+def fetch_chart(api_keys, interval, minutes, now, folder):
     response = twelvedata_get(
         'https://api.twelvedata.com/time_series',
         params={'symbol': 'XAU/USD', 'interval': interval, 'outputsize': 160,
-                'timezone': 'UTC', 'apikey': key}, timeout=(10, 45))
-    data = api_json(response, f'Twelve Data {interval}', [key])
+                'timezone': 'UTC'}, timeout=(10, 45), api_keys=api_keys)
+    data = api_json(response, f'Twelve Data {interval}', api_keys)
     if data.get('status') != 'ok' or not data.get('values'):
         raise RuntimeError(f'{interval}: data rejected')
     meta = data.get('meta', {})
@@ -314,6 +314,8 @@ def main():
               'execution': 'manual_only_no_auto_trading'}
     save_record(record_path, record)
     names = ['TWELVEDATA_API_KEY', 'SENSENOVA_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'PLAN_UPDATE_TOKEN']
+    api_keys = [os.getenv(name, '').strip() for name in ('TWELVEDATA_API_KEY', 'TWELVEDATA_API_KEY_2')]
+    api_keys = [key for key in api_keys if key]
     config = {name: os.getenv(name, '').strip() for name in names}
     memory_state, memory_status = daily_memory.load_state(MEMORY_PATH, now.to_pydatetime(), MEMORY_MODE)
     record['market_memory'] = {'status': memory_status, 'revision': memory_state['revision'],
@@ -345,7 +347,7 @@ def main():
         for interval, minutes in [('5min', 5), ('15min', 15), ('1h', 60)]:
             record['stage'] = 'fetch_' + interval
             save_record(record_path, record)
-            frame, image, diagnostic = fetch_chart(config['TWELVEDATA_API_KEY'], interval, minutes, now, folder)
+            frame, image, diagnostic = fetch_chart(api_keys, interval, minutes, now, folder)
             record['charts'].append(diagnostic)
             if interval == '5min':
                 m5_frame = frame
@@ -359,7 +361,7 @@ def main():
             save_record(record_path, record)
         record['stage'] = 'fundamentals'
         save_record(record_path, record)
-        fundamentals = collect_fundamentals(config['TWELVEDATA_API_KEY'], now, folder)
+        fundamentals = collect_fundamentals(api_keys, now, folder)
         record['fundamentals'] = {
             'calendar_event_count': len(fundamentals['calendar_events']),
             'calendar_events': fundamentals['calendar_events'],
