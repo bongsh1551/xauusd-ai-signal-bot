@@ -138,7 +138,7 @@ def fetch_chart(key, interval, minutes, now, folder):
                       title=f'XAU/USD {interval} | MYT UTC+8 | {ANALYSIS_MODE.upper()}',
                       figsize=(18, 9), returnfig=True, tight_layout=True,
                       update_width_config={'candle_width': 0.72,
-                                           'wick_linewidth': 1.25,
+                                           'candle_linewidth': 1.25,
                                            'ohlc_linewidth': 1.25})
     buffer = io.BytesIO()
     try:
