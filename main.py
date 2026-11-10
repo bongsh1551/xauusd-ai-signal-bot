@@ -450,31 +450,12 @@ def main():
             record['analysis_ingest'] = {
                 'attempted': True, 'sent': False, 'error': ingest_message[:500]}
             raise RuntimeError('Cloudflare analysis ingest failed: ' + ingest_message)
-        if not safety_gate['passed']:
-            message = (HEADER + '\n\n状态：WAIT（安全闸拦截）\n'
-                       + '时间：' + record['created_at_myt'] + '\n'
-                       + ('价格：' + f'{current_price:.2f}' + '\n' if current_price is not None else '')
-                       + '原因：' + '; '.join(safety_reasons) + '\n'
-                       + '未满足实时信号安全条件；不提供 ENTRY_READY。')
-        else:
-            message = HEADER + '\n\n' + analysis.removeprefix(HEADER).lstrip()
-            if trade_plan:
-                message += '\n\n📋 ICT/SMC Trade Plan（结构参考，非自动下单指令）\n'
-                message += '```json\n' + json.dumps(trade_plan, ensure_ascii=False, indent=2) + '\n```'
-                message += '\n实际 entry 与 SL 由交易者根据 broker 成交情况决定；lot 与实际风险在此之后才计算。'
-        if len(message.encode('utf-16-le')) // 2 > 4000:
-            raise RuntimeError('Analysis too long; saved in journal; Telegram skipped rather than truncating')
+        # GitHub is the analysis producer only. Cloudflare owns user-facing Telegram
+        # alerts and chat, so never send the raw analysis or market_watch JSON here.
         record['stage'] = 'telegram'
-        record['telegram'] = {'attempted': True, 'sent': False}
+        record['telegram'] = {'attempted': False, 'sent': False,
+                              'reason': 'USER_NOTIFICATIONS_OWNED_BY_CLOUDFLARE'}
         save_record(record_path, record)
-        response = requests.post(
-            f"https://api.telegram.org/bot{config['TELEGRAM_BOT_TOKEN']}/sendMessage",
-            data={'chat_id': config['TELEGRAM_CHAT_ID'], 'text': message}, timeout=(10, 60))
-        sent = api_json(response, 'Telegram', list(config.values()))
-        if sent.get('ok') is not True:
-            raise RuntimeError('Telegram rejected message')
-        record['telegram'] = {'attempted': True, 'sent': True, 'truncated': False,
-                              'message_id': sent.get('result', {}).get('message_id')}
         record['plan_upload'] = {'attempted': False, 'sent': False,
                                  'reason': 'PLAN_STORED_BY_ANALYSIS_INGEST'}
         record['status'] = 'completed'
