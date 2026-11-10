@@ -294,6 +294,30 @@ def upload_analysis_context(config, record, analysis, safety_gate, m5_diagnostic
         raise RuntimeError('Cloudflare analysis ingest rejected')
     return result
 
+def upload_market_heartbeat(config, run_id, created_at_utc, charts):
+    """Record validated chart acquisition independently from AI analysis."""
+    m5 = next((item for item in charts if item.get('interval') == '5min'), None)
+    if not m5 or not m5.get('last_closed_candle_utc'):
+        raise RuntimeError('Market heartbeat requires validated M5 close time')
+    data_as_of = (pd.Timestamp(m5['last_closed_candle_utc']) + pd.Timedelta(minutes=5)).isoformat()
+    payload = {
+        'run_id': run_id,
+        'created_at_utc': created_at_utc,
+        'data_as_of_utc': data_as_of,
+        'charts': charts,
+        'market_data_status': 'FETCHED_OHLC_VALIDATED'
+    }
+    response = requests.post(
+        'https://goldscalp-telegram.bongsh2002.workers.dev/ingest-market-heartbeat',
+        headers={'Authorization': 'Bearer ' + config['PLAN_UPDATE_TOKEN'],
+                 'Content-Type': 'application/json'},
+        json=payload, timeout=(10, 20))
+    result = api_json(response, 'Cloudflare market heartbeat', [config['PLAN_UPDATE_TOKEN']])
+    if result.get('ok') is not True:
+        raise RuntimeError('Cloudflare market heartbeat rejected')
+    return result
+
+
 def main():
     now = pd.Timestamp.now(tz='UTC')
     local_now = now.tz_convert('Asia/Kuala_Lumpur')
@@ -359,6 +383,26 @@ def main():
             parts.extend([{'text': text}, {'inline_data': {'mime_type': 'image/png',
                           'data': base64.b64encode(image).decode('ascii')}}])
             save_record(record_path, record)
+        record['market_heartbeat'] = {'attempted': True, 'sent': False}
+        try:
+            heartbeat_result = upload_market_heartbeat(
+                config, run_id, record['created_at_utc'], record['charts'])
+            record['market_heartbeat'] = {
+                'attempted': True, 'sent': True,
+                'received_at': heartbeat_result.get('received_at'),
+                'data_as_of_utc': heartbeat_result.get('data_as_of_utc')
+            }
+        except Exception as heartbeat_error:
+            heartbeat_message = (str(heartbeat_error) if isinstance(heartbeat_error, RuntimeError)
+                                 else type(heartbeat_error).__name__)
+            for secret in config.values():
+                if secret:
+                    heartbeat_message = heartbeat_message.replace(secret, '[REDACTED]')
+            record['market_heartbeat'] = {
+                'attempted': True, 'sent': False, 'error': heartbeat_message[:300]}
+            print('Market heartbeat update failed; AI analysis will continue: '
+                  + heartbeat_message[:300])
+        save_record(record_path, record)
         record['stage'] = 'fundamentals'
         save_record(record_path, record)
         fundamentals = collect_fundamentals(api_keys, now, folder)
