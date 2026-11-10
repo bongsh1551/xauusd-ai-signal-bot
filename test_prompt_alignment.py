@@ -28,7 +28,7 @@ def test_cloudflare_prompt_contains_core_rules():
     rules = [
         "latest verified structured report",
         "do not create, upgrade, or downgrade market status.",
-        "do not turn `wait` into `approach` or `entry_ready`",
+        "do not turn wait into approach or entry_ready.",
         "do not invent", "stale",
     ]
     for rule in rules:
