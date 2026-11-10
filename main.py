@@ -16,6 +16,7 @@ import pandas as pd
 import requests
 
 from fundamentals import collect_fundamentals
+from twelvedata_client import get as twelvedata_get
 import daily_memory
 
 MODEL = 'sensenova-6.8-flash-lite'
@@ -82,7 +83,7 @@ def api_json(response, service, secrets):
 
 
 def fetch_chart(key, interval, minutes, now, folder):
-    response = requests.get(
+    response = twelvedata_get(
         'https://api.twelvedata.com/time_series',
         params={'symbol': 'XAU/USD', 'interval': interval, 'outputsize': 160,
                 'timezone': 'UTC', 'apikey': key}, timeout=(10, 45))
