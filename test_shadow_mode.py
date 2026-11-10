@@ -1,33 +1,37 @@
 import unittest
-
 import publication_guard
 
+class PublicationGuardTests(unittest.TestCase):
+    def chart(self, interval):
+        return {"interval": interval, "timestamp_stale": False,
+                "run_is_myt_weekend": False, "quality_review_required": False,
+                "quality_verdict": "NO_NARROW_RUN_FLAG"}
 
-class ShadowPublicationTests(unittest.TestCase):
     def record(self, **overrides):
-        value = {
-            'mode': 'shadow',
-            'safety_gate': {'passed': False, 'reasons': ['shadow mode: live publication disabled']},
-            'trade_plan': None,
-        }
+        value = {"mode": "manual_signals",
+                 "safety_gate": {"passed": True, "reasons": []},
+                 "charts": [self.chart("5min"), self.chart("15min"), self.chart("1h")]}
         value.update(overrides)
         return value
 
-    def test_shadow_wait_observation_may_be_sent(self):
-        self.assertTrue(publication_guard.shadow_telegram_allowed(self.record()))
+    def test_verified_manual_record_passes(self):
+        self.assertTrue(publication_guard.verified_record(self.record()))
 
-    def test_shadow_entry_ready_plan_is_never_sent(self):
-        self.assertFalse(publication_guard.shadow_telegram_allowed(
-            self.record(trade_plan={'status': 'ENTRY_READY'})))
+    def test_shadow_mode_never_passes_live_publication_gate(self):
+        self.assertFalse(publication_guard.verified_record(self.record(mode="shadow")))
 
-    def test_live_record_does_not_use_shadow_exception(self):
-        self.assertFalse(publication_guard.shadow_telegram_allowed(
-            self.record(mode='live')))
+    def test_missing_safety_reason_is_not_enough(self):
+        self.assertFalse(publication_guard.verified_record(
+            self.record(safety_gate={"passed": False, "reasons": []})))
 
-    def test_shadow_requires_explicit_safety_block_reason(self):
-        self.assertFalse(publication_guard.shadow_telegram_allowed(
-            self.record(safety_gate={'passed': False, 'reasons': []})))
+    def test_missing_chart_blocks_publication(self):
+        self.assertFalse(publication_guard.verified_record(
+            self.record(charts=[self.chart("5min"), self.chart("15min")])))
 
+    def test_stale_chart_blocks_publication(self):
+        charts = [self.chart("5min"), self.chart("15min"), self.chart("1h")]
+        charts[0]["timestamp_stale"] = True
+        self.assertFalse(publication_guard.verified_record(self.record(charts=charts)))
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
