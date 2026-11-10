@@ -164,8 +164,8 @@ def main():
                 "chart_quality_flags": {
                     item["interval"]: item.get("quality_review_required") for item in charts
                 },
-                "safety_gate_passed": safety_gate_passed,
-                "safety_gate_reasons": safety_reasons,
+                "data_quality_gate_passed": safety_gate_passed,
+                "data_quality_gate_reasons": safety_reasons,
                 "live_publication_ready": False,
                 "token_usage": usage,
                 "reasoning_length_characters": diagnostic.get("reasoning_length"),
