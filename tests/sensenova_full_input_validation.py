@@ -69,7 +69,7 @@ def main():
                 {"text": instruction},
                 {"text": "【DAILY MARKET MEMORY｜24小时连续上下文】\n" + memory_context},
             ]
-            image_pairs = []
+            chart_inputs = []
             charts = []
             m5_diagnostic = None
 
@@ -88,31 +88,33 @@ def main():
                     + "\n程序诊断：" + json.dumps(diagnostic, ensure_ascii=False)
                 )
                 png_image = (folder / f"{interval}.png").read_bytes()
-                image_pairs.append({
+                chart_inputs.append({
                     "interval": interval,
+                    "text": chart_text,
                     "png": png_image,
                     "webp": image_bytes,
                 })
-                common_parts.append({"text": chart_text})
 
             fundamentals = collect_fundamentals(twelve_key, now, folder)
-            common_parts.append({"text": fundamentals["context"]})
-
             # Identical text, OHLC, memory, fundamentals and chart pixels;
             # only the image encoding/MIME differs between the two API calls.
             variants = {}
             for image_format in ("png", "webp"):
                 parts = list(common_parts)
-                for pair in image_pairs:
+                for pair in chart_inputs:
                     image_bytes = pair[image_format]
-                    parts.append({"inline_data": {
-                        "mime_type": "image/" + image_format,
-                        "data": base64.b64encode(image_bytes).decode("ascii"),
-                    }})
+                    parts.extend([
+                        {"text": pair["text"]},
+                        {"inline_data": {
+                            "mime_type": "image/" + image_format,
+                            "data": base64.b64encode(image_bytes).decode("ascii"),
+                        }},
+                    ])
+                parts.append({"text": fundamentals["context"]})
                 variant_summary = {
                     "image_format": image_format,
-                    "image_bytes": {p["interval"]: len(p[image_format]) for p in image_pairs},
-                    "image_total_bytes": sum(len(p[image_format]) for p in image_pairs),
+                    "image_bytes": {p["interval"]: len(p[image_format]) for p in chart_inputs},
+                    "image_total_bytes": sum(len(p[image_format]) for p in chart_inputs),
                     "result": "NOT_RUN",
                 }
                 try:
