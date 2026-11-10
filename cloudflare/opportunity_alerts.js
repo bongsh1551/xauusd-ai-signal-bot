@@ -32,12 +32,14 @@ export function candidates(meta, now = Date.now()) {
     (price>=z.low&&price<=z.high||z.status==='APPROACH')).map(z=>({
       key:'opportunity:approach:v3:'+new Date(created+8*3600000).toISOString().slice(0,10)+':'+
         z.scenario_id+':APPROACH',
-      text:'XAUUSD 机会预警｜尚未确认进场\n方向：'+z.direction+
-        '\n关注区域：'+z.low.toFixed(2)+'–'+z.high.toFixed(2)+' '+z.zone_type+
-        '\n本轮 M5 收盘参考：'+price.toFixed(2)+
-        levelText(z)+'\n等待确认：'+z.entry_trigger+'\n取消条件：'+z.cancel_condition+
-        '\n数据对应 M5 K线起始时间（UTC）：'+charts.find(c=>c.interval==='5min').last_closed_candle_utc+
-        '\n当前未确认，不是立即进场指令；是否交易由你决定。'
+      text:'XAUUSD｜机会接近，尚未进场\\n'+
+        '目前方向：'+(z.direction==='BUY'?'偏向做多':'偏向做空')+'\\n'+
+        '关注区域：'+z.low.toFixed(2)+'–'+z.high.toFixed(2)+'\\n'+
+        '当前参考价：'+price.toFixed(2)+'\\n'+
+        '等待确认：'+z.entry_trigger.slice(0,220)+'\\n'+
+        levelText(z).replace(/\\nSL依据：[\\s\\S]*$/,'')+'\\n'+
+        '取消条件：'+z.cancel_condition.slice(0,180)+'\\n'+
+        '状态：尚未确认，不要提前进场。'
     })).filter(a=>a.text.length<=3500);
 }
 export async function notifyAccepted(body, env) {
