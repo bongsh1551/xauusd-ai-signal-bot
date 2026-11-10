@@ -1,0 +1,42 @@
+name: SenseNova Full Payload Validation
+on:
+  push:
+    branches:
+      - experiment/sensenova-full-payload-validation
+    paths:
+      - .github/workflows/sensenova-full-payload-validation.yml
+      - test_sensenova_full_payload.py
+permissions:
+  contents: read
+jobs:
+  full-payload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Restore 24-hour market memory
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/daily_market_memory.json
+          key: daily-market-memory-\${{ github.run_id }}
+          restore-keys: |
+            daily-market-memory-
+      - name: Restore FX cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/fx_strength.json
+          key: fx-strength-\${{ github.run_id }}
+          restore-keys: |
+            fx-strength-
+      - name: Install project dependencies
+        run: pip install -r requirements.txt
+      - name: Run isolated full-load SenseNova test
+        env:
+          TWELVEDATA_API_KEY: \${{ secrets.TWELVEDATA_API_KEY }}
+          SENSENOVA_API_KEY: \${{ secrets.SENSENOVA_API_KEY }}
+          ANALYSIS_MODE: manual_signals
+          MARKET_MEMORY_MODE: manual_signals
+        run: python -u test_sensenova_full_payload.py
