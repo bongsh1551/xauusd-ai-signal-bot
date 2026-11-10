@@ -10,8 +10,7 @@ ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 
 # A tiny valid PNG; repeated three times to verify the production image-count shape.
 PNG_1X1 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
-    "/x8AAwMCAO+jV3sAAAAASUVORK5CYII="
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8//8/AwMDEwMDAwMDAwAkBgMB/DXemwAAAABJRU5ErkJggg=="
 )
 
 def main():
