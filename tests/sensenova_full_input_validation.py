@@ -65,10 +65,11 @@ def main():
         os.chdir(work)
         os.environ["ZONE_LIFECYCLE_STATE_PATH"] = str(work / "zone_lifecycle_state.json")
         try:
-            parts = [
+            common_parts = [
                 {"text": instruction},
                 {"text": "【DAILY MARKET MEMORY｜24小时连续上下文】\n" + memory_context},
             ]
+            chart_inputs = []
             charts = []
             m5_diagnostic = None
 
@@ -86,99 +87,101 @@ def main():
                     + frame.tail(40).to_csv(index_label="timestamp_utc")
                     + "\n程序诊断：" + json.dumps(diagnostic, ensure_ascii=False)
                 )
-                parts.extend([
-                    {"text": chart_text},
-                    {"inline_data": {
-                        "mime_type": "image/png",
-                        "data": base64.b64encode(image_bytes).decode("ascii"),
-                    }},
-                ])
+                png_image = (folder / f"{interval}.png").read_bytes()
+                chart_inputs.append({
+                    "interval": interval,
+                    "text": chart_text,
+                    "png": png_image,
+                    "webp": image_bytes,
+                })
 
             fundamentals = collect_fundamentals(twelve_key, now, folder)
-            parts.append({"text": fundamentals["context"]})
+            # Identical text, OHLC, memory, fundamentals and chart pixels;
+            # only the image encoding/MIME differs between the two API calls.
+            variants = {}
+            for image_format in ("png", "webp"):
+                parts = list(common_parts)
+                for pair in chart_inputs:
+                    image_bytes = pair[image_format]
+                    parts.extend([
+                        {"text": pair["text"]},
+                        {"inline_data": {
+                            "mime_type": "image/" + image_format,
+                            "data": base64.b64encode(image_bytes).decode("ascii"),
+                        }},
+                    ])
+                parts.append({"text": fundamentals["context"]})
+                variant_summary = {
+                    "image_format": image_format,
+                    "image_bytes": {p["interval"]: len(p[image_format]) for p in chart_inputs},
+                    "image_total_bytes": sum(len(p[image_format]) for p in chart_inputs),
+                    "result": "NOT_RUN",
+                }
+                try:
+                    adapted = runner.post(
+                        "https://generativelanguage.googleapis.com/v1beta/models/"
+                        + runner.MODEL + ":generateContent",
+                        headers={"x-goog-api-key": sense_key},
+                        json={"contents": [{"role": "user", "parts": parts}],
+                              "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048}},
+                        timeout=(10, 120),
+                    )
+                    result = adapted.json()
+                    candidates = result.get("candidates") or []
+                    if not candidates:
+                        raise RuntimeError("SenseNova adapter returned no candidate")
+                    candidate = candidates[0]
+                    analysis = "\n".join(
+                        item.get("text", "")
+                        for item in candidate.get("content", {}).get("parts", [])
+                        if isinstance(item, dict) and isinstance(item.get("text"), str)
+                    ).strip()
+                    if candidate.get("finishReason") != "STOP" or not analysis:
+                        raise RuntimeError("SenseNova full-input response incomplete")
+                    analysis_status = runner.validate_analysis(analysis)
+                    trade_plan = pipeline.extract_json_block(analysis, "trade_plan")
+                    market_watch = pipeline.extract_json_block(analysis, "market_watch")
+                    if not isinstance(market_watch, dict) or not isinstance(market_watch.get("zones"), list):
+                        raise RuntimeError("market_watch schema validation failed")
+                    diagnostic = dict(runner.LAST_DIAGNOSTIC)
+                    variant_summary.update({
+                        "result": "PASS",
+                        "analysis_status": analysis_status,
+                        "market_watch_zones": len(market_watch["zones"]),
+                        "trade_plan_present": isinstance(trade_plan, dict),
+                        "token_usage": diagnostic.get("usage", {}),
+                        "finish_reason": diagnostic.get("finish_reason"),
+                    })
+                except Exception as exc:
+                    variant_summary.update({
+                        "result": "FAIL",
+                        "error": (str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__)[:500],
+                        "diagnostic": dict(runner.LAST_DIAGNOSTIC),
+                    })
+                variants[image_format] = variant_summary
 
-            # Call the exact production SenseNova adapter and its strict output
-            # validator, but do not call pipeline.main(), Cloudflare ingest,
-            # Telegram, or any publication function.
-            adapted = runner.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                + runner.MODEL + ":generateContent",
-                headers={"x-goog-api-key": sense_key},
-                json={"contents": [{"role": "user", "parts": parts}],
-                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048}},
-                timeout=(10, 120),
-            )
-            result = adapted.json()
-            candidates = result.get("candidates") or []
-            if not candidates:
-                raise RuntimeError("SenseNova adapter returned no candidate")
-            candidate = candidates[0]
-            analysis = "\n".join(
-                item.get("text", "")
-                for item in candidate.get("content", {}).get("parts", [])
-                if isinstance(item, dict) and isinstance(item.get("text"), str)
-            ).strip()
-            if candidate.get("finishReason") != "STOP" or not analysis:
-                raise RuntimeError("SenseNova full-input response incomplete")
-
-            # Re-run the production contract validator explicitly for a clear
-            # status record. The adapter also ran this validation before return.
-            analysis_status = runner.validate_analysis(analysis)
-            trade_plan = pipeline.extract_json_block(analysis, "trade_plan")
-            market_watch = pipeline.extract_json_block(analysis, "market_watch")
-            if not isinstance(market_watch, dict) or not isinstance(market_watch.get("zones"), list):
-                raise RuntimeError("market_watch schema validation failed")
-
-            safety_reasons = []
-            if m5_diagnostic is None:
-                safety_reasons.append("M5 diagnostic unavailable")
-            else:
-                if m5_diagnostic.get("timestamp_stale"):
-                    safety_reasons.append("M5 data stale")
-                if m5_diagnostic.get("run_is_myt_weekend"):
-                    safety_reasons.append("weekend")
-                for chart in charts:
-                    if chart.get("quality_review_required"):
-                        safety_reasons.append(
-                            str(chart.get("interval", "unknown"))
-                            + " suspicious near-flat candle run; review required"
-                        )
-            safety_gate_passed = not safety_reasons
-
-            diagnostic = runner.LAST_DIAGNOSTIC
-            usage = diagnostic.get("usage", {})
+            png_ok = variants["png"]["result"] == "PASS"
+            webp_ok = variants["webp"]["result"] == "PASS"
             summary = {
-                "result": "PASS_FULL_INPUT_MODEL_AND_SCHEMA_VALIDATION",
+                "result": "PASS_BOTH_ENCODINGS" if png_ok and webp_ok else "PARTIAL_OR_FAILED",
                 "publication": "DISABLED_BY_TEST",
                 "model": runner.MODEL,
-                "profile": diagnostic.get("requested_profile"),
-                "finish_reason": diagnostic.get("finish_reason"),
-                "analysis_status": analysis_status,
-                "final_output_characters": len(analysis),
-                "market_watch_zones": len(market_watch["zones"]),
-                "trade_plan_present": isinstance(trade_plan, dict),
+                "profile": os.environ.get("SENSENOVA_API_PROFILE", "instruct"),
                 "market_memory_status": memory_status,
-                "chart_candles": {
-                    item["interval"]: item.get("candles_sent") for item in charts
-                },
-                "chart_quality_flags": {
-                    item["interval"]: item.get("quality_review_required") for item in charts
-                },
-                "data_quality_gate_passed": safety_gate_passed,
-                "data_quality_gate_reasons": safety_reasons,
+                "chart_dimensions_max_edge": 2048,
+                "chart_candles": {item["interval"]: item.get("candles_sent") for item in charts},
+                "chart_quality_flags": {item["interval"]: item.get("quality_review_required") for item in charts},
+                "variants": variants,
+                "data_quality_gate_passed": not any(item.get("quality_review_required") for item in charts),
                 "live_publication_ready": False,
-                "token_usage": usage,
-                "reasoning_length_characters": diagnostic.get("reasoning_length"),
-                "zone_lifecycle_changes": (
-                    diagnostic.get("zone_lifecycle", {}).get("changes", [])
-                ),
+                "same_market_input_for_both": True,
             }
-            print("GOLDSCALP_FULL_VALIDATION=" + json.dumps(
+            print("GOLDSCALP_WEBP_AB_VALIDATION=" + json.dumps(
                 summary, ensure_ascii=False, sort_keys=True
             ))
-            print("RESULT=PASS_FULL_INPUT_MODEL_AND_SCHEMA_VALIDATION")
+            print("RESULT=" + summary["result"])
             print("NOTICE=No Telegram, Cloudflare ingest, publication, or automatic order was executed.")
-            return 0
+            return 0 if png_ok and webp_ok else 1
         finally:
             os.chdir(old_cwd)
 

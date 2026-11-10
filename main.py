@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
 import requests
+from PIL import Image
 
 from fundamentals import collect_fundamentals
 import daily_memory
@@ -131,24 +132,32 @@ def fetch_chart(key, interval, minutes, now, folder):
         'note': '时间新不代表有效行情；窄幅统计为诊断，不判定原因；周末标记不替代交易时段日历。'}
     plot = frame.tail(120).copy()
     plot.index = plot.index.tz_convert('Asia/Kuala_Lumpur').tz_localize(None)
-    # High-detail chart rendering: preserve candle bodies, wicks and swing structure.
-    # Groq Qwen3.8 charges a fixed 2,048 image tokens per image, so do not
-    # downscale or use lossy compression merely to reduce file size.
+    # Render once, cap the longest edge at 2048 px, then encode lossless PNG
+    # baseline and high-quality WEBP from the exact same pixels for fair A/B tests.
     fig, _ = mpf.plot(plot, type='candle', style='yahoo', volume=False,
                       title=f'XAU/USD {interval} | MYT UTC+8 | {ANALYSIS_MODE.upper()}',
                       figsize=(18, 9), returnfig=True, tight_layout=True,
                       update_width_config={'candle_width': 0.72,
                                            'candle_linewidth': 1.25,
                                            'ohlc_linewidth': 1.25})
-    buffer = io.BytesIO()
     try:
-        fig.savefig(buffer, format='png', dpi=160, bbox_inches='tight')
+        rendered = io.BytesIO()
+        fig.savefig(rendered, format='png', dpi=160, bbox_inches='tight')
+        rendered.seek(0)
+        with Image.open(rendered) as source:
+            source = source.convert('RGB')
+            source.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+            png_buffer = io.BytesIO()
+            source.save(png_buffer, format='PNG', optimize=True)
+            png_image = png_buffer.getvalue()
+            webp_buffer = io.BytesIO()
+            source.save(webp_buffer, format='WEBP', quality=92, method=6)
+            webp_image = webp_buffer.getvalue()
     finally:
         plt.close(fig)
-    image = buffer.getvalue()
-    buffer.close()
-    (folder / f'{interval}.png').write_bytes(image)
-    return frame, image, diagnostic
+    (folder / f'{interval}.png').write_bytes(png_image)
+    (folder / f'{interval}.webp').write_bytes(webp_image)
+    return frame, webp_image, diagnostic
 
 
 def extract_json_block(analysis, label):
@@ -345,7 +354,7 @@ def main():
                     + frame.tail(40).to_csv(index_label='timestamp_utc')
                     + '\n程序诊断：' + json.dumps(diagnostic, ensure_ascii=False))
             (folder / f'{interval}_ai_text.txt').write_text(text, encoding='utf-8')
-            parts.extend([{'text': text}, {'inline_data': {'mime_type': 'image/png',
+            parts.extend([{'text': text}, {'inline_data': {'mime_type': 'image/webp',
                           'data': base64.b64encode(image).decode('ascii')}}])
             save_record(record_path, record)
         record['stage'] = 'fundamentals'
