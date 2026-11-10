@@ -43,14 +43,14 @@ class FxCacheTests(unittest.TestCase):
         return {'status': 'no_events', 'events': [], 'coverage': 'full',
                 'requested_horizon_end_utc': (now + pd.Timedelta(hours=24)).isoformat()}
 
-    def test_cache_younger_than_four_minutes_avoids_fx_api_calls(self):
+    def test_cache_younger_than_sixty_minutes_avoids_fx_api_calls(self):
         fundamentals.save_fx_cache({
             'EUR/USD': {'cached_at_utc': self.now.isoformat(), 'data': fx_value('EUR/USD')},
             'USD/JPY': {'cached_at_utc': self.now.isoformat(), 'data': fx_value('USD/JPY')},
         }, self.now)
         with patch.object(fundamentals, 'fetch_calendar', side_effect=self.calendar), \
              patch.object(fundamentals, 'fetch_fx') as fetch:
-            result = fundamentals.collect_fundamentals('key', self.now + pd.Timedelta(minutes=3), self.folder)
+            result = fundamentals.collect_fundamentals('key', self.now + pd.Timedelta(minutes=59), self.folder)
         fetch.assert_not_called()
         self.assertEqual(result['currency_strength']['status'], 'USD_STRONG')
         self.assertEqual(result['currency_strength']['data_source'], 'cache')
@@ -78,11 +78,11 @@ class FxCacheTests(unittest.TestCase):
             mocked.reset_mock()
             third = fundamentals.collect_fundamentals(
                 'key', self.now + pd.Timedelta(minutes=16), self.folder)
-            self.assertEqual(mocked.call_count, 2)
-            self.assertEqual([call.args[1] for call in mocked.call_args_list], ['EUR/USD', 'USD/JPY'])
+            self.assertEqual(mocked.call_count, 1)
+            self.assertEqual([call.args[1] for call in mocked.call_args_list], ['EUR/USD'])
             self.assertEqual(third['currency_strength']['status'], 'USD_STRONG')
 
-    def test_five_minute_run_refreshes_currency_strength(self):
+    def test_five_minute_run_reuses_hourly_currency_strength_cache(self):
         fundamentals.save_fx_cache({
             'EUR/USD': {'cached_at_utc': self.now.isoformat(), 'data': fx_value('EUR/USD')},
             'USD/JPY': {'cached_at_utc': self.now.isoformat(), 'data': fx_value('USD/JPY')},
@@ -90,9 +90,9 @@ class FxCacheTests(unittest.TestCase):
         with patch.object(fundamentals, 'fetch_calendar', side_effect=self.calendar), \
              patch.object(fundamentals, 'fetch_fx', side_effect=lambda key, symbol, now, folder: fx_value(symbol)) as fetch:
             result = fundamentals.collect_fundamentals('key', self.now + pd.Timedelta(minutes=5), self.folder)
-        self.assertEqual(fetch.call_count, 2)
-        self.assertEqual(result['currency_strength']['data_source'], 'live_api')
-        self.assertEqual(result['currency_strength']['refresh_target_minutes'], 5)
+        fetch.assert_not_called()
+        self.assertEqual(result['currency_strength']['data_source'], 'cache')
+        self.assertEqual(result['currency_strength']['refresh_target_minutes'], 60)
 
     def test_expired_pair_is_not_returned_from_cache(self):
         fundamentals.save_fx_cache({
