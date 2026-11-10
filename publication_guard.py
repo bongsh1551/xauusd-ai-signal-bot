@@ -57,6 +57,8 @@ def main():
     _block_pending = False
     _block_saved = False
     runner.save_record = guarded_save
+    # Ensure the production pipeline uses the guarded persistence hook too.
+    runner.pipeline.save_record = guarded_save
     # sensenova_runner owns the SenseNova-only transport and retry policy.
     install_zone_levels(runner)
     install_quality_evidence(runner.pipeline)
