@@ -12,9 +12,56 @@ def err(r):
     key=os.getenv("SENSENOVA_API_KEY","")
     return (body.replace(key,"[REDACTED]") if key else body)[:1800]
 
+def install_twelvedata_diagnostics(td_key):
+    original = pipeline.api_json
+
+    def diagnostic_api_json(response, service, secrets):
+        if response.status_code != 200:
+            raw_url = response.request.url if response.request else ""
+            if raw_url:
+                parts = urlsplit(raw_url)
+                query = [(k, "[REDACTED]" if k.lower() in {"apikey", "api_key", "token", "key"} else v)
+                         for k, v in parse_qsl(parts.query, keep_blank_values=True)]
+                safe_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
+            else:
+                safe_url = None
+            body = response.text or ""
+            for secret in secrets:
+                if secret:
+                    body = body.replace(secret, "[REDACTED]")
+            try:
+                parsed = response.json()
+                provider_message = parsed.get("message") or parsed.get("error", {}).get("message")
+                provider_code = parsed.get("code")
+                provider_status = parsed.get("status")
+            except Exception:
+                provider_message = provider_code = provider_status = None
+            safe_headers = {k: response.headers.get(k) for k in
+                            ("content-type", "date", "server", "x-request-id", "request-id")
+                            if response.headers.get(k)}
+            print(json.dumps({
+                "stage": "twelvedata_raw_http_error",
+                "service": service,
+                "http_status": response.status_code,
+                "request_url_redacted": safe_url,
+                "provider_code": provider_code,
+                "provider_status": provider_status,
+                "provider_message": provider_message,
+                "response_body_redacted": body[:3000],
+                "safe_response_headers": safe_headers,
+                "api_key_present": bool(td_key),
+                "api_key_length": len(td_key),
+                "api_key_sha256_prefix": hashlib.sha256(td_key.encode()).hexdigest()[:12]
+            }, ensure_ascii=False), flush=True)
+        return original(response, service, secrets)
+
+    pipeline.api_json = diagnostic_api_json
+
+
 def main():
     td=os.environ["TWELVEDATA_API_KEY"].strip()
     key=os.environ["SENSENOVA_API_KEY"].strip()
+    install_twelvedata_diagnostics(td)
     now=pd.Timestamp.now(tz="UTC"); local=now.tz_convert("Asia/Kuala_Lumpur")
     pipeline.ANALYSIS_MODE="manual_signals"
     pipeline.HEADER="🟡 XAUUSD 手动信号分析｜不自动下单"
