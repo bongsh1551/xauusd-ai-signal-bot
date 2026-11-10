@@ -3,8 +3,10 @@ import time
 import requests
 
 
-def get(url, *, params=None, timeout=(10, 30), sleep=time.sleep):
+def get(url, *, params=None, timeout=(10, 30), sleep=None):
     """Retry one HTTP 429 after Retry-After; never rotate API keys or bypass quotas."""
+    if sleep is None:
+        sleep = time.sleep
     response = requests.get(url, params=params, timeout=timeout)
     if response.status_code != 429:
         return response
