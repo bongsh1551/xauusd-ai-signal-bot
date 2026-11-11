@@ -1,0 +1,40 @@
+name: Isolated Chat Model Acceptance
+
+on:
+  push:
+    branches: ['test/chat-model-acceptance-20261108']
+    paths:
+      - 'review/chat_model_acceptance.py'
+      - '.github/workflows/chat-model-acceptance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolated-chat-model-acceptance
+  cancel-in-progress: false
+
+jobs:
+  model-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check isolated test syntax
+        run: python -m py_compile review/chat_model_acceptance.py
+      - name: Run at most ten model calls without retries
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python review/chat_model_acceptance.py
+      - name: Save model responses for review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-chat-model-acceptance-${{ github.run_id }}
+          path: review/chat-model-results.json
+          if-no-files-found: warn
+          retention-days: 7
