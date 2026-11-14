@@ -1,6 +1,12 @@
 name: Export Twelve Data XAUUSD M5 History
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/export_twelvedata_xauusd_m5.py'
+      - 'tools/test_export_twelvedata_xauusd_m5.py'
+      - '.github/workflows/export-twelvedata-xauusd-m5.yml'
   workflow_dispatch:
     inputs:
       start_date:
@@ -33,7 +39,11 @@ jobs:
           python-version: "3.11"
       - name: Install exporter dependency
         run: pip install "requests>=2.32,<3"
+      - name: Run offline exporter tests
+        run: python -m unittest -v tools.test_export_twelvedata_xauusd_m5
+
       - name: Fetch historical XAU/USD M5 candles
+        if: github.event_name == 'workflow_dispatch'
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           TWELVEDATA_API_KEY_2: ${{ secrets.TWELVEDATA_API_KEY_2 }}
@@ -44,6 +54,7 @@ jobs:
             --max-requests "${{ inputs.max_requests }}" \
             --out-dir twelvedata_export
       - name: Upload CSV and provenance
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: XAUUSD-TwelveData-M5-${{ inputs.start_date }}-to-${{ inputs.end_date }}
