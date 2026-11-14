@@ -1,0 +1,47 @@
+name: Export XAUUSD M5 History (Twelve Data)
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "UTC start date (YYYY-MM-DD)"
+        required: true
+        default: "2020-01-01"
+        type: string
+      end_date:
+        description: "UTC end date (YYYY-MM-DD); blank means now"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  export-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+      TWELVEDATA_API_KEY_2: ${{ secrets.TWELVEDATA_API_KEY_2 }}
+      START_DATE: ${{ inputs.start_date }}
+      END_DATE: ${{ inputs.end_date }}
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install exporter dependency
+        run: python -m pip install --disable-pip-version-check requests
+      - name: Export XAU/USD M5 history
+        run: python tools/export_twelvedata_xauusd_m5.py --start-date "$START_DATE" --end-date "$END_DATE" --max-requests 700 --chunk-days 14
+      - name: Upload CSV and manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xauusd-twelvedata-m5-history
+          path: export/
+          if-no-files-found: warn
+          retention-days: 14
