@@ -1,0 +1,63 @@
+name: Export Twelve Data XAUUSD M5 History
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/export_twelvedata_xauusd_m5.py'
+      - 'tools/test_export_twelvedata_xauusd_m5.py'
+      - '.github/workflows/export-twelvedata-xauusd-m5.yml'
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "Start date (UTC), YYYY-MM-DD"
+        required: true
+        default: "2020-01-01"
+        type: string
+      end_date:
+        description: "End date (UTC), YYYY-MM-DD inclusive"
+        required: true
+        default: "2026-11-13"
+        type: string
+      max_requests:
+        description: "Safety cap (max 750; Basic plan daily quota 800 credits)"
+        required: true
+        default: "700"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  export-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install exporter dependency
+        run: pip install "requests>=2.32,<3"
+      - name: Run offline exporter tests
+        run: python -m unittest -v tools.test_export_twelvedata_xauusd_m5
+
+      - name: Fetch historical XAU/USD M5 candles
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          TWELVEDATA_API_KEY_2: ${{ secrets.TWELVEDATA_API_KEY_2 }}
+        run: |
+          python tools/export_twelvedata_xauusd_m5.py \
+            --start-date "${{ inputs.start_date }}" \
+            --end-date "${{ inputs.end_date }}" \
+            --max-requests "${{ inputs.max_requests }}" \
+            --out-dir twelvedata_export
+      - name: Upload CSV and provenance
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: XAUUSD-TwelveData-M5-${{ inputs.start_date }}-to-${{ inputs.end_date }}
+          path: twelvedata_export/
+          if-no-files-found: error
+          retention-days: 14
