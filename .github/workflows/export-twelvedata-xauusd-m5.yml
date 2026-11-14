@@ -9,21 +9,14 @@ on:
       - '.github/workflows/export-twelvedata-xauusd-m5.yml'
   workflow_dispatch:
     inputs:
-      start_date:
-        description: "Start date (UTC), YYYY-MM-DD"
+      outputsize:
+        description: "Number of recent M5 candles to test"
         required: true
-        default: "2020-01-01"
-        type: string
-      end_date:
-        description: "End date (UTC), YYYY-MM-DD inclusive"
-        required: true
-        default: "2026-11-13"
-        type: string
-      max_requests:
-        description: "Safety cap (max 750; Basic plan daily quota 800 credits)"
-        required: true
-        default: "700"
-        type: string
+        default: "500"
+        type: choice
+        options:
+          - "300"
+          - "500"
 
 permissions:
   contents: read
@@ -31,7 +24,7 @@ permissions:
 jobs:
   export-history:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,23 +34,20 @@ jobs:
         run: pip install "requests>=2.32,<3"
       - name: Run offline exporter tests
         run: python -m unittest -v tools.test_export_twelvedata_xauusd_m5
-
-      - name: Fetch historical XAU/USD M5 candles
+      - name: Probe earliest timestamp and export recent M5 candles
         if: github.event_name == 'workflow_dispatch'
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           TWELVEDATA_API_KEY_2: ${{ secrets.TWELVEDATA_API_KEY_2 }}
         run: |
           python tools/export_twelvedata_xauusd_m5.py \
-            --start-date "${{ inputs.start_date }}" \
-            --end-date "${{ inputs.end_date }}" \
-            --max-requests "${{ inputs.max_requests }}" \
+            --outputsize "${{ inputs.outputsize }}" \
             --out-dir twelvedata_export
-      - name: Upload CSV and provenance
+      - name: Upload CSV and lookback report
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: XAUUSD-TwelveData-M5-${{ inputs.start_date }}-to-${{ inputs.end_date }}
+          name: XAUUSD-TwelveData-M5-Lookback-${{ inputs.outputsize }}
           path: twelvedata_export/
           if-no-files-found: error
           retention-days: 14
