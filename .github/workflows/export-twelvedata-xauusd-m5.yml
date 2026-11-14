@@ -18,14 +18,14 @@ on:
           - "300"
           - "500"
       start_date:
-        description: "Optional historical comparison start date (UTC), YYYY-MM-DD"
+        description: "Historical comparison start date (UTC), YYYY-MM-DD"
         required: false
-        default: ""
+        default: "2026-10-12"
         type: string
       end_date:
-        description: "Optional historical comparison end date (UTC), YYYY-MM-DD"
+        description: "Historical comparison end date (UTC), YYYY-MM-DD"
         required: false
-        default: ""
+        default: "2026-10-12"
         type: string
 
 permissions:
@@ -50,10 +50,10 @@ jobs:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           TWELVEDATA_API_KEY_2: ${{ secrets.TWELVEDATA_API_KEY_2 }}
         run: |
-          python tools/export_twelvedata_xauusd_m5.py \
-            --outputsize "${{ inputs.outputsize }}" \
-            --start-date "${{ inputs.start_date }}" \
-            --end-date "${{ inputs.end_date }}" \
+          python tools/export_twelvedata_xauusd_m5.py \\
+            --outputsize "${{ inputs.outputsize }}" \\
+            --start-date "${{ inputs.start_date }}" \\
+            --end-date "${{ inputs.end_date }}" \\
             --out-dir twelvedata_export
       - name: Upload CSV and lookback report
         if: github.event_name == 'workflow_dispatch'
