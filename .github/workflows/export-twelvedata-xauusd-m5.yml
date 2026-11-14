@@ -17,6 +17,16 @@ on:
         options:
           - "300"
           - "500"
+      start_date:
+        description: "Optional historical comparison start date (UTC), YYYY-MM-DD"
+        required: false
+        default: ""
+        type: string
+      end_date:
+        description: "Optional historical comparison end date (UTC), YYYY-MM-DD"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -42,6 +52,8 @@ jobs:
         run: |
           python tools/export_twelvedata_xauusd_m5.py \
             --outputsize "${{ inputs.outputsize }}" \
+            --start-date "${{ inputs.start_date }}" \
+            --end-date "${{ inputs.end_date }}" \
             --out-dir twelvedata_export
       - name: Upload CSV and lookback report
         if: github.event_name == 'workflow_dispatch'
