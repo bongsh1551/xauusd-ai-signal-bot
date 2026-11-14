@@ -11,6 +11,8 @@ SYMBOL, INTERVAL = "XAU/USD", "5min"
 def args_parse():
     p=argparse.ArgumentParser()
     p.add_argument("--outputsize",type=int,choices=(300,500),default=500)
+    p.add_argument("--start-date",default="")
+    p.add_argument("--end-date",default="")
     p.add_argument("--out-dir",default="twelvedata_export")
     return p.parse_args()
 
@@ -46,8 +48,18 @@ def main():
     started=datetime.now(timezone.utc)
 
     earliest, h1=request_json(session,"earliest_timestamp",{"symbol":SYMBOL,"interval":INTERVAL},key,1)
-    series, h2=request_json(session,"time_series",{"symbol":SYMBOL,"interval":INTERVAL,
-        "outputsize":a.outputsize,"timezone":"UTC","order":"asc","format":"JSON"},key,2)
+    if bool(a.start_date) != bool(a.end_date):
+        raise SystemExit("Provide both --start-date and --end-date, or neither.")
+    series_params={"symbol":SYMBOL,"interval":INTERVAL,"outputsize":a.outputsize,
+        "timezone":"UTC","order":"asc","format":"JSON"}
+    if a.start_date:
+        datetime.strptime(a.start_date,"%Y-%m-%d")
+        datetime.strptime(a.end_date,"%Y-%m-%d")
+        if a.end_date < a.start_date:
+            raise SystemExit("end-date must be on/after start-date")
+        series_params["start_date"]=f"{a.start_date} 00:00:00"
+        series_params["end_date"]=f"{a.end_date} 23:59:59"
+    series, h2=request_json(session,"time_series",series_params,key,2)
     meta=series.get("meta",{})
     if meta.get("symbol")!=SYMBOL or meta.get("interval")!=INTERVAL:
         raise SystemExit("Provider returned unexpected symbol or interval metadata")
@@ -72,7 +84,8 @@ def main():
       "provider":"Twelve Data","plan_context":"Basic/free key; XAU/USD trial symbol",
       "symbol":SYMBOL,"interval":INTERVAL,"timezone":"UTC",
       "earliest_timestamp_response":earliest_value,
-      "requested_outputsize":a.outputsize,"candles_returned":len(rows),
+      "requested_outputsize":a.outputsize,"requested_start_date":a.start_date or "latest",
+      "requested_end_date":a.end_date or "latest","candles_returned":len(rows),
       "first_returned_candle_utc":rows[0][0],"last_returned_candle_utc":rows[-1][0],
       "lookback_hours_inclusive":round((datetime.fromisoformat(rows[-1][0].replace("Z","+00:00"))-datetime.fromisoformat(rows[0][0].replace("Z","+00:00"))).total_seconds()/3600,2),
       "api_calls":2,"credits_used_header_call1":h1.get("api-credits-used","unknown"),
