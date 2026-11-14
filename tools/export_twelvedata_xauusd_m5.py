@@ -42,7 +42,19 @@ def fetch(session,key,start,end,no):
         if response.status_code==429:
             if attempt==MAX_RETRIES: raise RuntimeError(f"request {no}: HTTP 429 after retries")
             time.sleep(65); continue
-        if response.status_code!=200: raise RuntimeError(f"request {no}: HTTP {response.status_code}")
+        if response.status_code!=200:
+            try:
+                error_data=response.json()
+            except ValueError:
+                error_data={}
+            message=error_data.get("message","") or error_data.get("error","")
+            code=error_data.get("code","unknown")
+            quota_used=response.headers.get("api-credits-used","unknown")
+            quota_left=response.headers.get("api-credits-left","unknown")
+            raise RuntimeError(
+                f"request {no}: HTTP {response.status_code}; provider_code={code}; "
+                f"message={scrub(message)}; credits_used={quota_used}; credits_left={quota_left}"
+            )
         try: data=response.json()
         except ValueError: raise RuntimeError(f"request {no}: invalid JSON") from None
         if data.get("status")=="error" or "values" not in data:
