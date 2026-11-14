@@ -86,6 +86,7 @@ def main():
     successful_windows = 0
     empty_windows = 0
     errors = []
+    invalid_rows_total = 0
     last_request_at = 0.0
     quota_left_values = []
 
@@ -171,6 +172,7 @@ def main():
                 continue
             rows[bar[0]] = bar[1:]
             accepted += 1
+        invalid_rows_total += rejected
         if accepted:
             successful_windows += 1
         else:
@@ -204,7 +206,7 @@ def main():
         "first_bar_utc": ordered[0][0] if ordered else None,
         "last_bar_utc": ordered[-1][0] if ordered else None,
         "duplicate_timestamps_after_dedup": 0,
-        "invalid_ohlc_rows_rejected": None,
+        "invalid_ohlc_rows_rejected": invalid_rows_total,
         "quota_left_observed_min": min(quota_left_values) if quota_left_values else None,
         "errors": errors,
         "csv_sha256": digest,
