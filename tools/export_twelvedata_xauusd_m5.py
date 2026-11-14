@@ -8,6 +8,8 @@ import requests
 BASE_URL = "https://api.twelvedata.com/time_series"
 SYMBOL, INTERVAL = "XAU/USD", "5min"
 CHUNK_DAYS, MIN_SECONDS_BETWEEN_CALLS, MAX_RETRIES = 7, 8.2, 3
+API_CALLS_USED = 0
+API_CALLS_CAP = 700
 
 def args_parse():
     p=argparse.ArgumentParser()
@@ -24,11 +26,15 @@ def scrub(value):
     return s[:300]
 
 def fetch(session,key,start,end,no):
+    global API_CALLS_USED
     params={"symbol":SYMBOL,"interval":INTERVAL,
       "start_date":f"{start.isoformat()} 00:00:00",
       "end_date":f"{end.isoformat()} 23:59:59",
       "timezone":"UTC","format":"JSON","apikey":key}
     for attempt in range(1,MAX_RETRIES+1):
+        if API_CALLS_USED >= API_CALLS_CAP:
+            raise RuntimeError("API call safety cap reached; stopping before daily quota is exhausted")
+        API_CALLS_USED += 1
         try: response=session.get(BASE_URL,params=params,timeout=(15,60))
         except requests.RequestException as exc:
             if attempt==MAX_RETRIES: raise RuntimeError(f"request {no}: network error ({type(exc).__name__})") from None
@@ -55,6 +61,8 @@ def main():
     while cur<=end:
         last=min(cur+timedelta(days=CHUNK_DAYS-1),end); chunks.append((cur,last)); cur=last+timedelta(days=1)
     if len(chunks)>a.max_requests: raise SystemExit(f"Range requires {len(chunks)} calls; cap is {a.max_requests}.")
+    global API_CALLS_CAP
+    API_CALLS_CAP=a.max_requests
     key=os.getenv("TWELVEDATA_API_KEY","").strip() or os.getenv("TWELVEDATA_API_KEY_2","").strip()
     if not key: raise SystemExit("Missing TWELVEDATA_API_KEY and TWELVEDATA_API_KEY_2 repository secrets")
     out=Path(a.out_dir); out.mkdir(parents=True,exist_ok=True)
@@ -86,7 +94,7 @@ def main():
       "start_date_requested":start.isoformat(),"end_date_requested_inclusive":end.isoformat(),
       "first_candle_utc":ordered[0][0],"last_candle_utc":ordered[-1][0],"candles":len(ordered),
       "duplicate_timestamps_overwritten":sum(x["rows_accepted"] for x in log)-len(ordered),
-      "requests_used":len(log),"chunk_days":CHUNK_DAYS,"started_utc":started.isoformat(),
+      "requests_used":len(log),"api_calls_attempted":API_CALLS_USED,"chunk_days":CHUNK_DAYS,"started_utc":started.isoformat(),
       "finished_utc":datetime.now(timezone.utc).isoformat(),"request_log":log,
       "note":"Research export only. Validate price alignment against GApps feed before creating labels."}
     (out/"metadata.json").write_text(json.dumps(meta,indent=2),encoding="utf-8")
